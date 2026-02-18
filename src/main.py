@@ -3,10 +3,13 @@ import time
 import os
 import numpy as np
 import re
+import pypdfium2 as pdfium
+import gc
 
 # Custom Project Imports
 from loaders.model_loader import ModelLoader
-from loaders.pdf_loader import PDFLoader
+# from loaders.pdf_loader import PDFLoader
+from loaders.pdfium_loader import PDFLoader
 from processing.enhancer import ImageEnhancer
 from processing.layout_engine import LayoutEngine
 from processing.ocr_engine import OCREngine
@@ -60,6 +63,7 @@ def get_unified_sorting(raw_boxes, tolerance=40):
 # -------------------------------
 def main():
     start_time = time.perf_counter()
+    DEBUG_IMAGE = False
     OCR_ENGINE_TYPE = "rapid"
     debug_exporter = PDFDebugExporter()
 
@@ -74,9 +78,14 @@ def main():
     output_path = f"{json_dir}/{input_file_name}_result.json"
     debug_pdf_path = f"{pdf_debug_dir}/{input_file_name}_layout_debug.pdf"
 
-    # Initialize Loaders and Engines
-    pdf_loader = PDFLoader(dpi=300)
-    pages = pdf_loader.load(pdf_path)
+    # -----------------------------
+    # PDFium Loader (Streaming)
+    # -----------------------------
+    pdf_loader = PDFLoader(scale=3.5)
+    pdf_loader.open(pdf_path)
+    total_pages = pdf_loader.get_total_pages()
+
+    # Initialize Models
     models = ModelLoader().load()
 
     layout_engine = LayoutEngine(models.layout_predictor)
@@ -86,73 +95,77 @@ def main():
         rapid_text_engine=models.rapid_text_engine,
         rapid_latex_engine=models.rapid_latex_engine
     )
-    
+
     toc_api = TOCProcessorAPI(ocr_engine)
     classifier = SemanticClassifier()
     context = ContextTracker()
 
-    # Pipeline state variables
     toc_data = []
-    toc_buffer_pages = []
-    full_toc_buffer = []  # To store ALL pages from 'Contents' to 'Anchor - 1'
+    full_toc_buffer = []
     target_anchor = None
     is_discovering_toc = False
     scholar_mode_active = False
 
     scout_debug_images = []
-    
     final_output = []
     debug_images = []
-    total_pages = len(pages)
 
     print(f"\n{'='*60}\n🛰️  PIPELINE STARTING: ANCHOR-SYNC MODE\n{'='*60}\n")
 
-    for page_no, page in enumerate(pages, 1):
-        image = page.convert("RGB")
+    for page_no in range(1, total_pages + 1):
+
+        # Render one page at a time (PDFium)
+        image = pdf_loader.load_page(page_no)
         width, height = image.size
-        
-        # Initial Layout Detection
-        # raw_boxes = layout_engine.detect(image)
+
         boxes = layout_engine.detect(image)
-        # boxes = get_unified_sorting(raw_boxes, tolerance=25)
         safe_coords = get_safe_padding(boxes, width, height)
 
-        # --- PHASE 1: SCOUT MODE (Look for "Contents" in Block 1) ---
+        # -------------------------------
+        # PHASE 1: SCOUT MODE
+        # -------------------------------
         if not is_discovering_toc and not scholar_mode_active:
-            scout_debug_images.append(draw_layout(image, boxes))
+            if DEBUG_IMAGE:
+              scout_debug_images.append(draw_layout(image, boxes))
+
             if boxes:
                 first_box = boxes[0]
                 x1, y1, x2, y2 = map(int, first_box.bbox)
                 crop = image.crop((max(0, x1-5), max(0, y1-5), min(width, x2+5), min(height, y2+5)))
                 header_text = ocr_engine.extract(crop, mode="rapid").lower().strip()
+
                 print(f"📄 [Page {page_no}] Header Scout: '{header_text}'")
 
                 if "contents" in header_text:
                     print(f"🎯 TRIGGER: 'Contents' identified on Page {page_no}.")
                     is_discovering_toc = True
-                    # DISPOSABLE PROBE: Run API just to get the string
-                    probe_results, _ = toc_api.run_api([page])
+
+                    # Probe using current rendered image
+                    probe_results, _ = toc_api.run_api([image])
                     if probe_results:
                         target_anchor = probe_results[0]["chapter_name"].lower()
-                        print(f"⚓ ANCHOR CAPTURED: '{target_anchor}' (Probe result discarded)")
-                    
-                    # Start the buffer WITH the Contents page included
-                    full_toc_buffer.append(page)
-                    is_discovering_toc = True
+                        print(f"⚓ ANCHOR CAPTURED: '{target_anchor}'")
+
+                    full_toc_buffer.append(page_no)
                     continue
-            
+
             if page_no >= 15:
-                print("❌ CRITICAL FAILURE: 'Contents' not found within first 15 pages. Terminating.")
+                print("❌ CRITICAL FAILURE: 'Contents' not found within first 15 pages.")
                 return
             continue
 
-        # --- PHASE 2: BUFFER MODE (Pages between Contents and Anchor) ---
+        # -------------------------------
+        # PHASE 2: BUFFER MODE
+        # -------------------------------
         if is_discovering_toc and not scholar_mode_active:
-            scout_debug_images.append(draw_layout(image, boxes))
+
+            if DEBUG_IMAGE:
+              scout_debug_images.append(draw_layout(image, boxes))
+
             found_anchor = False
+
             print(f"\n🔍 [Page {page_no}] Syncing with Anchor: '{target_anchor}'")
-            
-            # 1. Check if the current page is the Anchor
+
             for i, box in enumerate(boxes[:5]):
                 if box.label in ["SectionHeader", "Text", "Title", "PageHeader"]:
                     x1, y1, x2, y2 = map(int, box.bbox)
@@ -188,70 +201,79 @@ def main():
                             # Log that we skipped an empty or useless block
                             if detected_text == "":
                                 print(f"   ∟ Page {page_no} Block {i+1}: OCR returned empty text. Skipping...")
-            
+
             if found_anchor:
                 print(f"\n🛑 ANCHOR MATCHED on Page {page_no}.")
-                debug_exporter.save(scout_debug_images, f"output/pdf/{input_file_name}_SCOUT_PHASE_DEBUG.pdf")
-                # UNIFIED EXECUTION: Process the entire collected buffer at once
+                if DEBUG_IMAGE:
+                  debug_exporter.save(
+                      scout_debug_images,
+                      f"output/pdf/{input_file_name}_SCOUT_PHASE_DEBUG.pdf"
+                  )
                 if full_toc_buffer:
-                    print(f"🔄 Running Unified TOC API for Pages: {page_no - len(full_toc_buffer)} to {page_no - 1}")
-                    toc_data, toc_frames = toc_api.run_api(full_toc_buffer, debug=True)
-                    
-                    # Save the single, complete TOC Debug
-                    save_json(toc_data, f"output/json/{input_file_name}_TOC_DEBUG.json")
-                    debug_exporter.save(toc_frames, f"{pdf_debug_dir}/{input_file_name}_TOC_LAYOUT.pdf")
-                
-                # 4. Handover to Scholar Mode
+                    toc_pages = [
+                        pdf_loader.load_page(p) for p in full_toc_buffer
+                    ]
+                    toc_data, toc_frames = toc_api.run_api(toc_pages, debug=True)
+
+                    save_json(
+                        toc_data,
+                        f"output/json/{input_file_name}_TOC_DEBUG.json"
+                    )
+                    debug_exporter.save(
+                        toc_frames,
+                        f"{pdf_debug_dir}/{input_file_name}_TOC_LAYOUT.pdf"
+                    )
+
+                    del toc_pages
+
                 matcher = StructuralMatcher(toc_data=toc_data)
                 is_discovering_toc = False
                 scholar_mode_active = True
-                print(f"🚀 SCHOLAR MODE ACTIVE. Starting extraction from Page {page_no}.")
-                # Note: No 'continue' here, so it falls through to Deep Extraction for this page
-            
+
             else:
-                # 5. If anchor NOT found, this page is part of the intermediate TOC
-                print(f"📥 [Page {page_no}] Adding to TOC buffer...", end="\r")
-                full_toc_buffer.append(page)
-                
-                # Optional: Debug save to see buffer growing 
-                
-                debug_exporter.save(scout_debug_images, f"output/pdf/{input_file_name}_SCOUT_FAILURE_DEBUG.pdf")
+                full_toc_buffer.append(page_no)
                 continue
 
-        # --- PHASE 3: DEEP SCHOLAR EXTRACTION ---
+        # -------------------------------
+        # PHASE 3: SCHOLAR MODE
+        # -------------------------------
         if scholar_mode_active:
-            print(f"\n🔍 [PAGE {page_no}/{total_pages}] - Deep Extraction Running...")
-            
-            # Detect Printed Page Number
+
             current_page_printed_no = None
-            candidate_indices = [i for i, b in enumerate(boxes) if b.label in ["PageHeader", "Text", "Title", "SectionHeader"]]
-            
+
+            candidate_indices = [
+                i for i, b in enumerate(boxes)
+                if b.label in ["PageHeader", "Text", "Title", "SectionHeader"]
+            ]
+
             for i in candidate_indices[:2]:
                 x1, y1, x2, y2 = map(int, safe_coords[i])
                 if y1 < (height * 0.15):
                     p_crop = image.crop((x1, y1, x2, y2))
                     p_text = ocr_engine.extract(p_crop, mode=OCR_ENGINE_TYPE)
                     res = classifier.classify(p_text)
+
                     if res["role"] == "PAGE_NUMBER":
                         current_page_printed_no = res["page_number"]
-                        print(f"   📄 Printed Page No: {current_page_printed_no}")
                         break
 
             page_blocks = []
+
             for i, box in enumerate(boxes):
+
                 label = box.label
                 group = LABEL_MAP.get(label, "TEXT")
-                if label in ["PageFooter", "Footnote"]: continue
+
+                if label in ["PageFooter", "Footnote"]:
+                    continue
 
                 x1, y1, x2, y2 = safe_coords[i]
-                crop = image.crop((max(0, x1-5), max(0, y1-5), min(width, x2+5), min(height, y2+5)))
+                crop = image.crop((x1, y1, x2, y2))
                 crop = ImageOps.autocontrast(crop)
 
-                # Specialized Routing
                 text = ""
+
                 if group in ("TEXT", "MATH"):
-                    engine_name = "Rapid-Latex" if (OCR_ENGINE_TYPE == "rapid" and group == "MATH") else "Rapid-Text"
-                    print(f"   [Block {i+1}] Routing to {engine_name}...".ljust(50), end="\r")
 
                     if group == "MATH":
                         res = models.rapid_latex_engine(np.array(crop))
@@ -264,18 +286,21 @@ def main():
                         else:
                             text = str(res_data)
 
-                # Semantic Classification
                 result = classifier.classify(text)
-                if result["role"] == "PAGE_NUMBER": continue
+
+                if result["role"] == "PAGE_NUMBER":
+                    continue
 
                 semantic_role = result["role"]
                 clean_text = result["clean_text"] if semantic_role != "FIGURE_BLOCK" else ""
 
-                # Contextual Linking
                 context.update(semantic_role, clean_text)
                 metadata = context.attach_metadata()
 
-                node = matcher.resolve_hierarchy(current_page_printed_no, metadata.get("current_chapter_verify"))
+                node = matcher.resolve_hierarchy(
+                    current_page_printed_no,
+                    metadata.get("current_chapter_verify")
+                )
 
                 page_blocks.append({
                     "pdf_page": page_no,
@@ -290,21 +315,25 @@ def main():
                         "unit_id": node.get("unit_id") if node else None
                     }
                 })
-            
 
-            # Post-Process Page
             page_blocks = bind_figures(page_blocks)
             final_output.extend(page_blocks)
             debug_images.append(draw_layout(image, boxes))
 
-    # --- SAVE OUTPUTS ---
-    debug_exporter.save(debug_images, debug_pdf_path)
+        
+    if DEBUG_IMAGE:
+      debug_exporter.save(debug_images, debug_pdf_path)
+
     transformed_final = [
-                transform_structure(block, block_index=idx) 
-                for idx, block in enumerate(final_output)
-            ]
+        transform_structure(block, block_index=idx)
+        for idx, block in enumerate(final_output)
+    ]
+
     save_json(transformed_final, output_path)
+
     print(f"\n\n✅ Finished in {time.perf_counter()-start_time:.2f} seconds. JSON count: {len(final_output)}")
 
+
+    
 if __name__ == "__main__":
     main()
