@@ -1,0 +1,28 @@
+# DO NOT force CPU index
+--extra-index-url https://pypi.org/simple
+
+torch
+torchvision
+torchaudio
+
+accelerate==1.12.0
+einops==0.8.2
+h5py==3.15.1
+numpy==1.26.4
+onnxruntime-gpu==1.20.1
+opencv-python==4.11.0.86
+pdf2image==1.17.0
+pillow==10.4.0
+pydantic==2.12.5
+pydantic-settings==2.12.0
+pymupdf==1.26.7
+pypdfium2==4.30.0
+python-dotenv==1.2.1
+pyyaml==6.0.3
+rapid-latex-ocr==0.0.9
+rapidocr-onnxruntime==1.4.4
+shapely==2.1.2
+super-image==0.2.0
+surya-ocr==0.17.1
+sympy==1.14.0
+transformers==4.57.6
