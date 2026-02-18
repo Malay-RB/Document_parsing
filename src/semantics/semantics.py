@@ -1,6 +1,6 @@
 import re
 import unicodedata
-from config import SEMANTIC_PATTERNS
+from src.config import SEMANTIC_PATTERNS
 
 class SemanticClassifier:
 
