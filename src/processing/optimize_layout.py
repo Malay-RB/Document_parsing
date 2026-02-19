@@ -1,3 +1,6 @@
+from PIL import ImageDraw, ImageFont
+
+
 def get_safe_padding(boxes, image_width, image_height, tolerance=60): # Increased tolerance
     if not boxes: return []
 
@@ -40,3 +43,89 @@ def get_safe_padding(boxes, image_width, image_height, tolerance=60): # Increase
     for i, idx in enumerate(sorted_indices):
         final_coords[idx] = expanded_boxes[i]
     return final_coords
+
+def draw_layout(image, boxes):
+    debug_img = image.copy()
+    draw = ImageDraw.Draw(debug_img)
+    try:
+        font = ImageFont.truetype("arial.ttf", 18)
+    except:
+        font = ImageFont.load_default()
+
+    for i, box in enumerate(boxes):
+        x1, y1, x2, y2 = map(int, box.bbox)
+        draw.rectangle((x1, y1, x2, y2), outline="red", width=2)
+        draw.text((x1, y1 - 18), f"{i+1}:{box.label}", fill="red", font=font)
+    return debug_img
+
+def filter_overlapping_boxes(boxes, threshold=0.8):
+    """Keep only the most relevant boxes when multiple boxes overlap."""
+    if not boxes: return []
+    
+    # Sort boxes by area (descending) so we keep larger containers if needed
+    # or sort by confidence if your model provides it.
+    sorted_boxes = sorted(boxes, key=lambda b: (b.bbox[2]-b.bbox[0]) * (b.bbox[3]-b.bbox[1]), reverse=True)
+    keep = []
+    
+    for i, current in enumerate(sorted_boxes):
+        is_redundant = False
+        curr_x1, curr_y1, curr_x2, curr_y2 = current.bbox
+        curr_area = (curr_x2 - curr_x1) * (curr_y2 - curr_y1)
+        
+        for other in keep:
+            ox1, oy1, ox2, oy2 = other.bbox
+            
+            # Calculate Intersection
+            ix1, iy1 = max(curr_x1, ox1), max(curr_y1, oy1)
+            ix2, iy2 = min(curr_x2, ox2), min(curr_y2, oy2)
+            
+            if ix2 > ix1 and iy2 > iy1:
+                intersection_area = (ix2 - ix1) * (iy2 - iy1)
+                # If current box is 80% covered by a box we already kept, skip it
+                if (intersection_area / curr_area) > threshold:
+                    is_redundant = True
+                    break
+        
+        if not is_redundant:
+            keep.append(current)
+    return keep
+
+def get_unified_sorting(raw_boxes, tolerance=40):
+    """
+    Groups layout boxes into horizontal lines and sorts them logically:
+    1. Top-to-Bottom (Vertical lines)
+    2. Left-to-Right (Within each line)
+    
+    Args:
+        raw_boxes: List of box objects with a .bbox property [x1, y1, x2, y2]
+        tolerance: Vertical pixel distance to consider boxes as being on the same line.
+                   (NCERT 3.5x scale usually needs 30-50px)
+    """
+    if not raw_boxes:
+        return []
+
+    # 1. Primary sort by the Top-Y coordinate (Vertical position)
+    # This gets us close to the reading order
+    sorted_by_y = sorted(raw_boxes, key=lambda b: b.bbox[1])
+    
+    lines = []
+    if sorted_by_y:
+        # Start the first line with the topmost box
+        curr_line = [sorted_by_y[0]]
+        
+        for i in range(1, len(sorted_by_y)):
+            # If the current box's Top-Y is within 'tolerance' of the 
+            # first box in our current line, they belong together.
+            if abs(sorted_by_y[i].bbox[1] - curr_line[0].bbox[1]) < tolerance:
+                curr_line.append(sorted_by_y[i])
+            else:
+                # The line is finished. Sort it Left-to-Right (X1 coordinate)
+                lines.append(sorted(curr_line, key=lambda b: b.bbox[0]))
+                # Start a new line
+                curr_line = [sorted_by_y[i]]
+        
+        # Don't forget to append the final line
+        lines.append(sorted(curr_line, key=lambda b: b.bbox[0]))
+    
+    # 2. Flatten the list of lines back into a single list of boxes
+    return [box for line in lines for box in line]
