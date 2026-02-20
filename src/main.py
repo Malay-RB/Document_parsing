@@ -26,7 +26,7 @@ def get_config():
     return {
         "DEBUG_IMAGE": True,
         "OCR_ENGINE_TYPE": "rapid",
-        "input_file_name": "ncert10M_25p",
+        "input_file_name": "ncert10M_8p",
         "json_dir": "output/json",
         "pdf_debug_dir": "output/pdf",
         "scout_limit": 15
@@ -58,14 +58,14 @@ def find_printed_page_no(image, boxes, safe_coords, ocr_engine, classifier, ocr_
             p_text = ocr_engine.extract(image.crop((x1, y1, x2, y2)), mode=ocr_type)
             res = classifier.classify(p_text)
             if res["role"] == "PAGE_NUMBER":
+                # ADDED: Logger for detected page number
+                logger.info(f"🔢 Detected Printed Page Number: {res['page_number']} (from box label: {box.label})")
                 return res["page_number"]
     return None
 
 # --- 3. PIPELINE PHASES ---
 def run_scout_phase(image, boxes, ocr_engine, config, page_no, width, height):
-    """Checks for 'Contents' to trigger TOC discovery."""
     if not boxes: return False, None
-    
     first_box = boxes[0]
     x1, y1, x2, y2 = map(int, first_box.bbox)
     crop = image.crop((max(0, x1-5), max(0, y1-5), min(width, x2+5), min(height, y2+5)))
@@ -78,7 +78,6 @@ def run_scout_phase(image, boxes, ocr_engine, config, page_no, width, height):
     return False, None
 
 def run_sync_phase(image, boxes, ocr_engine, target_anchor, height, width):
-    """Looks for the first chapter title to end TOC buffering."""
     for i, box in enumerate(boxes[:5]):
         if box.label in ["SectionHeader", "Text", "Title", "PageHeader"]:
             x1, y1, x2, y2 = map(int, box.bbox)
@@ -87,35 +86,31 @@ def run_sync_phase(image, boxes, ocr_engine, target_anchor, height, width):
                 detected_text = ocr_engine.extract(crop, mode="rapid").lower().strip()
                 
                 if detected_text and len(detected_text) > 3:
-                    logger.info(f"    ∟ Block {i+1} [{box.label}]: '{detected_text}'")
+                    # ADDED: Debug logging for fuzzy matching logic
                     anchor_words = set(re.findall(r'\w+', target_anchor.lower()))
                     detected_words = set(re.findall(r'\w+', detected_text.lower()))
+                    
+                    logger.debug(f"🔍 Sync Check [Block {i+1}]: target_set={anchor_words} | detected_set={detected_words}")
+                    
                     if anchor_words.issubset(detected_words) and anchor_words:
-                        logger.info(f"    ✅ MATCH FOUND: '{detected_text}'")
+                        logger.info(f"✅ SYNC MATCH: Anchor '{target_anchor}' found in '{detected_text}'")
                         return True
     return False
 
 def finalize_output(state, temp_path, final_path, debug_path, exporter, cfg):
     if state["total_blocks"] > 0:
-        print(f"\n\n📦 Finalizing {state['total_blocks']} blocks...")
-        
-        # Merge JSONL to JSON
+        logger.info(f"📦 Finalizing {state['total_blocks']} blocks total...")
         final_data = []
         if os.path.exists(temp_path):
             with open(temp_path, "r", encoding="utf-8") as f:
                 for line in f: final_data.append(json.loads(line))
             save_json(final_data, final_path)
             os.remove(temp_path)
-        
-        # Debug PDF
         if cfg["DEBUG_IMAGE"] and (state["debug_images"] or state["scout_images"]):
-            print(f"🎨 Saving layout debug PDF...")
             exporter.save(state["scout_images"] + state["debug_images"], debug_path)
-            print(f"📁 Debug PDF: {debug_path}")
-        
-        print(f"✅ SUCCESS: Result saved to {final_path}")
+        logger.info(f"✅ PIPELINE SUCCESS: Result saved to {final_path}")
     else:
-        print("\n⚠️ No data processed.")
+        logger.warning("⚠️ No data processed. Pipeline finished empty.")
 
 # --- 4. MAIN CONTROLLER ---
 def main():
@@ -123,13 +118,11 @@ def main():
     cfg = get_config()
     setup_directories(cfg)
     
-    # Paths
     pdf_path = f"input/{cfg['input_file_name']}.pdf"
     output_path = f"{cfg['json_dir']}/{cfg['input_file_name']}_result.json"
     temp_jsonl_path = output_path.replace(".json", ".jsonl")
     debug_pdf_path = f"{cfg['pdf_debug_dir']}/{cfg['input_file_name']}_layout_debug.pdf"
 
-    # State
     state = {
         "total_blocks": 0,
         "scholar_mode": False,
@@ -141,14 +134,13 @@ def main():
     }
 
     print(f"\n{'='*60}\n🛰️  PIPELINE STARTING: {cfg['input_file_name']}\n{'='*60}\n")
-    logger.info(f"System initialized for {cfg['input_file_name']}")
+    logger.info(f"Pipeline init for {cfg['input_file_name']}")
 
     try:
-        # Initialize Components
         pdf_loader = PDFLoader(scale=3.5)
         pdf_loader.open(pdf_path)
         total_pages = pdf_loader.get_total_pages()
-        print(f"📄 PDF Loaded: {total_pages} total pages found.")
+        logger.info(f"📄 PDF Opened. Total Pages in Source: {total_pages}")
 
         models = ModelLoader().load()
         layout_engine = LayoutEngine(models.layout_predictor)
@@ -164,7 +156,8 @@ def main():
 
         with open(temp_jsonl_path, "w", encoding="utf-8") as temp_file:
             for page_no in range(1, total_pages + 1):
-                print(f"\r🔍 Processing Page {page_no}/{total_pages}...", end="", flush=True)
+                # ADDED: Critical log to identify which physical PDF page we are entering
+                logger.info(f"--- Entering PDF Page: {page_no} ---")
                 
                 image = pdf_loader.load_page(page_no)
                 width, height = image.size
@@ -174,32 +167,29 @@ def main():
                 # PHASE 1: SCOUT
                 if not state["is_discovering_toc"] and not state["scholar_mode"]:
                     if cfg["DEBUG_IMAGE"]: state["scout_images"].append(draw_layout(image, boxes))
-                    
                     found_toc, _ = run_scout_phase(image, boxes, ocr_engine, cfg, page_no, width, height)
                     if found_toc:
                         state["is_discovering_toc"] = True
                         probe_results, _ = toc_api.run_api([image])
                         if probe_results:
                             state["target_anchor"] = probe_results[0]["chapter_name"].lower()
-                            logger.info(f"⚓ ANCHOR CAPTURED: '{state['target_anchor']}'")
+                            logger.info(f"⚓ ANCHOR IDENTIFIED: '{state['target_anchor']}'")
                         state["toc_buffer"].append(page_no)
                         continue
-                    
                     if page_no >= cfg["scout_limit"]:
-                        logger.critical(f"❌ CRITICAL: 'Contents' not found within {cfg['scout_limit']} pages.")
+                        logger.critical(f"❌ Aborted: Contents not found within {cfg['scout_limit']} pages.")
                         return
 
                 # PHASE 2: SYNC
                 elif state["is_discovering_toc"] and not state["scholar_mode"]:
                     if cfg["DEBUG_IMAGE"]: state["scout_images"].append(draw_layout(image, boxes))
-                    logger.info(f"🔍 [Page {page_no}] Syncing with Anchor: '{state['target_anchor']}'")
+                    # ADDED: Context log for sync phase
+                    logger.info(f"🔍 Sync Phase: Searching for Chapter Anchor '{state['target_anchor']}' on Page {page_no}")
                     
                     if run_sync_phase(image, boxes, ocr_engine, state["target_anchor"], height, width):
-                        logger.info("📑 Processing TOC Buffer...")
+                        logger.info(f"🎓 Scholar Mode Transition Triggered at Page {page_no}")
                         toc_pages = [pdf_loader.load_page(p) for p in state["toc_buffer"]]
                         toc_data, _ = toc_api.run_api(toc_pages, debug=cfg["DEBUG_IMAGE"])
-                        save_json(toc_data, f"output/json/{cfg['input_file_name']}_TOC_DEBUG.json")
-                        
                         matcher = StructuralMatcher(toc_data=toc_data)
                         state["scholar_mode"] = True
                         state["is_discovering_toc"] = False
@@ -210,16 +200,25 @@ def main():
 
                 # PHASE 3: SCHOLAR
                 if state["scholar_mode"]:
-                    logger.info(f"🎓 Scholar Mode: Page {page_no}")
+                    # ADDED: Context log for starting Scholar Mode on a specific page
+                    logger.info(f"🎓 Scholar Mode Extraction: PDF Page {page_no}")
+                    
                     printed_no = find_printed_page_no(image, boxes, safe_coords, ocr_engine, classifier, cfg["OCR_ENGINE_TYPE"], height)
                     
+                    # ADDED: Verify current chapter state from ContextTracker
+                    current_context_chap = context.state.get("current_chapter_verify", "None")
+                    logger.info(f"📑 Context State: Printed Page={printed_no} | Active Chapter={current_context_chap}")
+
                     page_blocks = []
                     for i, box in enumerate(boxes):
                         if box.label in ["PageFooter", "Footnote"]: continue
                         
                         raw_text = extract_text_block(image, box, safe_coords[i], models, ocr_engine, cfg["OCR_ENGINE_TYPE"])
                         result = classifier.classify(raw_text)
-                        if result["role"] == "PAGE_NUMBER": continue
+                        
+                        if result["role"] == "PAGE_NUMBER": 
+                            logger.debug(f"Skip block {i}: Identified as inline Page Number")
+                            continue
 
                         context.update(result["role"], result["clean_text"])
                         node = matcher.resolve_hierarchy(printed_no, context.state["current_chapter_verify"])
@@ -232,7 +231,6 @@ def main():
                                          "chapter_name": node["chapter_name"] if node else None}
                         })
 
-                    # Incremental Flush
                     page_blocks = bind_figures(page_blocks)
                     for block in page_blocks:
                         transformed = transform_structure(block, block_index=state["total_blocks"])
@@ -240,23 +238,23 @@ def main():
                         state["total_blocks"] += 1
                     
                     temp_file.flush()
-                    logger.info(f"   [DONE] Page {page_no} saved. Total Blocks: {state['total_blocks']}")
+                    logger.info(f"💾 Page {page_no} Flushed. Current Block Count: {state['total_blocks']}")
                     if cfg["DEBUG_IMAGE"]: state["debug_images"].append(draw_layout(image, boxes))
 
-                # Memory Management
+                # Per-Page Release
                 del image
-                if page_no % 5 == 0: gc.collect()
+                if page_no % 5 == 0:
+                    logger.debug(f"Memory Cleanup: GC at page {page_no}")
+                    gc.collect()
 
     except KeyboardInterrupt:
-        print("\n\n🛑 Manual interruption detected (Ctrl+C). Saving progress...")
-        logger.warning("Pipeline interrupted by user.")
+        logger.warning("Pipeline interrupted via KeyboardInterrupt.")
     except Exception as e:
-        logger.critical(f"🛑 FATAL PIPELINE ERROR: {str(e)}", exc_info=True)
+        logger.critical(f"🛑 FATAL: {str(e)}", exc_info=True)
     finally:
         finalize_output(state, temp_jsonl_path, output_path, debug_pdf_path, debug_exporter, cfg)
 
     print(f"\n⏱️  Total Runtime: {time.perf_counter() - start_time:.2f} seconds.")
-
 
 if __name__ == "__main__":
     main()
