@@ -90,42 +90,79 @@ def filter_overlapping_boxes(boxes, threshold=0.8):
             keep.append(current)
     return keep
 
-def get_unified_sorting(raw_boxes, tolerance=40):
-    """
-    Groups layout boxes into horizontal lines and sorts them logically:
-    1. Top-to-Bottom (Vertical lines)
-    2. Left-to-Right (Within each line)
-    
-    Args:
-        raw_boxes: List of box objects with a .bbox property [x1, y1, x2, y2]
-        tolerance: Vertical pixel distance to consider boxes as being on the same line.
-                   (NCERT 3.5x scale usually needs 30-50px)
-    """
+
+def get_unified_sorting(raw_boxes, tolerance=30):
+
+
     if not raw_boxes:
         return []
 
-    # 1. Primary sort by the Top-Y coordinate (Vertical position)
-    # This gets us close to the reading order
-    sorted_by_y = sorted(raw_boxes, key=lambda b: b.bbox[1])
+    #  Sort by Y (top → bottom)
+    boxes = sorted(raw_boxes, key=lambda b: b.bbox[1])
+
+    #  Group into rows
+    rows = []
+    current_row = [boxes[0]]
+
+    for box in boxes[1:]:
+        prev = current_row[-1]
+
+        prev_y = prev.bbox[1]
+        curr_y = box.bbox[1]
+
+        # same row
+        if abs(curr_y - prev_y) <= tolerance:
+            current_row = [box]   # or current_row = [box]
+        else:
+            rows.append(current_row)
+            current_row = [box]
+
+    rows.append(current_row)
+
+    # Left → right inside each row
+    ordered = []
+    for row in rows:
+        row.sort(key=lambda b: b.bbox[0])
+        ordered.extend(row)
+
+    return ordered
+
+# def get_unified_sorting(raw_boxes, tolerance=40):
+#     """
+#     Groups layout boxes into horizontal lines and sorts them logically:
+#     1. Top-to-Bottom (Vertical lines)
+#     2. Left-to-Right (Within each line)
     
-    lines = []
-    if sorted_by_y:
-        # Start the first line with the topmost box
-        curr_line = [sorted_by_y[0]]
-        
-        for i in range(1, len(sorted_by_y)):
-            # If the current box's Top-Y is within 'tolerance' of the 
-            # first box in our current line, they belong together.
-            if abs(sorted_by_y[i].bbox[1] - curr_line[0].bbox[1]) < tolerance:
-                curr_line.append(sorted_by_y[i])
-            else:
-                # The line is finished. Sort it Left-to-Right (X1 coordinate)
-                lines.append(sorted(curr_line, key=lambda b: b.bbox[0]))
-                # Start a new line
-                curr_line = [sorted_by_y[i]]
-        
-        # Don't forget to append the final line
-        lines.append(sorted(curr_line, key=lambda b: b.bbox[0]))
+#     Args:
+#         raw_boxes: List of box objects with a .bbox property [x1, y1, x2, y2]
+#         tolerance: Vertical pixel distance to consider boxes as being on the same line.
+#                    (NCERT 3.5x scale usually needs 30-50px)
+#     """
+#     if not raw_boxes:
+#         return []
+
+#     # 1. Primary sort by the Top-Y coordinate (Vertical position)
+#     # This gets us close to the reading order
+#     sorted_by_y = sorted(raw_boxes, key=lambda b: b.bbox[1])
     
-    # 2. Flatten the list of lines back into a single list of boxes
-    return [box for line in lines for box in line]
+#     lines = []
+#     if sorted_by_y:
+#         # Start the first line with the topmost box
+#         curr_line = [sorted_by_y[0]]
+        
+#         for i in range(1, len(sorted_by_y)):
+#             # If the current box's Top-Y is within 'tolerance' of the 
+#             # first box in our current line, they belong together.
+#             if abs(sorted_by_y[i].bbox[1] - curr_line[0].bbox[1]) < tolerance:
+#                 curr_line.append(sorted_by_y[i])
+#             else:
+#                 # The line is finished. Sort it Left-to-Right (X1 coordinate)
+#                 lines.append(sorted(curr_line, key=lambda b: b.bbox[0]))
+#                 # Start a new line
+#                 curr_line = [sorted_by_y[i]]
+        
+#         # Don't forget to append the final line
+#         lines.append(sorted(curr_line, key=lambda b: b.bbox[0]))
+    
+#     # 2. Flatten the list of lines back into a single list of boxes
+#     return [box for line in lines for box in line]

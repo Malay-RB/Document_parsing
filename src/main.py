@@ -17,16 +17,19 @@ from processing.structural_matcher import StructuralMatcher
 from processing.toc_api import TOCProcessorAPI
 from processing.optimize_layout import get_safe_padding, draw_layout, filter_overlapping_boxes, get_unified_sorting
 from processing.logger import logger
+from processing.page_strategy import find_printed_page_no
+from processing.pipeline import run_scout_phase, run_sync_phase, extract_text_block
+from processing.page_no_tracker import PageNumberTracker
 from semantics.semantics import SemanticClassifier, ContextTracker, bind_figures, transform_structure
-from exporters.exporter import PDFDebugExporter, save_json
+from exporters.exporter import PDFDebugExporter
+from exporters.exporter import finalize_output
 from config import LABEL_MAP
 
-# --- 1. CONFIGURATION & SETUP ---
 def get_config():
     return {
         "DEBUG_IMAGE": True,
         "OCR_ENGINE_TYPE": "rapid",
-        "input_file_name": "ncert10M_8p",
+        "input_file_name": "MH_5p",
         "json_dir": "output/json",
         "pdf_debug_dir": "output/pdf",
         "scout_limit": 15
@@ -36,112 +39,7 @@ def setup_directories(config):
     os.makedirs(config["json_dir"], exist_ok=True)
     os.makedirs(config["pdf_debug_dir"], exist_ok=True)
 
-# --- 2. EXTRACTION LOGIC ---
-def extract_text_block(image, box, safe_coord, models, ocr_engine, ocr_type):
-    x1, y1, x2, y2 = map(int, safe_coord)
-    group = LABEL_MAP.get(box.label, "TEXT")
-    
-    # Check for VISUAL/TABLE here to prevent the main loop from calling OCR needlessly
-    if group == "VISUAL":
-        logger.info(f"🖼️  Visual Block Detected [{box.label}]: Skipping OCR.")
-        return "[FIGURE_OR_IMAGE_BLOCK]"
 
-    if group == "TABLE":
-        logger.info(f"📊 Table Block Detected: Skipping standard OCR.")
-        return "[TABLE_BLOCK]"
-
-    # Only crop and process if it's TEXT or MATH
-    crop = PIL.ImageOps.autocontrast(image.crop((x1, y1, x2, y2)))
-
-    if group == "MATH":
-        logger.debug(f"📐 Math Block: Routing to RapidLatex")
-        res = models.rapid_latex_engine(np.array(crop))
-        return res[0] if isinstance(res, tuple) else str(res)
-
-    # Default to Standard Text
-    logger.debug(f"📝 Text Block: Routing to RapidText")
-    res_data = models.rapid_text_engine(np.array(crop))
-    if isinstance(res_data, tuple) and res_data[0]:
-        return " ".join([line[1] for line in res_data[0]])
-    return str(res_data)
-
-def find_printed_page_no(image, boxes, safe_coords, ocr_engine, classifier, ocr_type, height):
-    # We increase the range slightly just in case a figure is at the top
-    for i, box in enumerate(boxes[:5]): 
-        
-        # --- THE FIX: SKIP VISUAL BLOCKS ---
-        # If the layout engine says this is a picture, don't try to find a page number in it
-        if LABEL_MAP.get(box.label) in ["VISUAL", "TABLE"]:
-            logger.debug(f"⏭️  Skipping page number check for {box.label} block at index {i}")
-            continue
-            
-        x1, y1, x2, y2 = map(int, safe_coords[i])
-        
-        # Only check the top 15% of the page
-        if y1 < (height * 0.15):
-            # Crop and OCR
-            crop_img = image.crop((x1, y1, x2, y2))
-            p_text = ocr_engine.extract(crop_img, mode=ocr_type)
-            
-            # Semantic check
-            res = classifier.classify(p_text)
-            if res["role"] == "PAGE_NUMBER":
-                logger.info(f"🔢 Detected Printed Page Number: {res['page_number']} (Block: {box.label})")
-                return res["page_number"]
-                
-    logger.warning("⚠️ No valid text-based page number found in the header area.")
-    return None
-
-# --- 3. PIPELINE PHASES ---
-def run_scout_phase(image, boxes, ocr_engine, config, page_no, width, height):
-    if not boxes: return False, None
-    first_box = boxes[0]
-    x1, y1, x2, y2 = map(int, first_box.bbox)
-    crop = image.crop((max(0, x1-5), max(0, y1-5), min(width, x2+5), min(height, y2+5)))
-    header_text = ocr_engine.extract(crop, mode="rapid").lower().strip()
-    logger.info(f"📄 [Page {page_no}] Header Scout: '{header_text}'")
-    
-    if "contents" in header_text:
-        logger.info(f"🎯 TRIGGER: 'Contents' found on Page {page_no}.")
-        return True, header_text
-    return False, None
-
-def run_sync_phase(image, boxes, ocr_engine, target_anchor, height, width):
-    for i, box in enumerate(boxes[:3]):
-        if box.label in ["SectionHeader", "Text", "Title", "PageHeader"]:
-            x1, y1, x2, y2 = map(int, box.bbox)
-            if y1 < (height * 0.3):
-                crop = image.crop((max(0, x1-5), max(0, y1-20), min(width, x2+5), min(height, y2+20)))
-                detected_text = ocr_engine.extract(crop, mode="rapid").lower().strip()
-                
-                if detected_text and len(detected_text) > 3:
-                    # ADDED: Debug logging for fuzzy matching logic
-                    anchor_words = set(re.findall(r'\w+', target_anchor.lower()))
-                    detected_words = set(re.findall(r'\w+', detected_text.lower()))
-                    
-                    logger.debug(f"🔍 Sync Check [Block {i+1}]: target_set={anchor_words} | detected_set={detected_words}")
-                    
-                    if anchor_words.issubset(detected_words) and anchor_words:
-                        logger.info(f"✅ SYNC MATCH: Anchor '{target_anchor}' found in '{detected_text}'")
-                        return True
-    return False
-
-def finalize_output(state, temp_path, final_path, debug_path, exporter, cfg):
-    if state["total_blocks"] > 0:
-        logger.info(f"📦 Finalizing {state['total_blocks']} blocks total...")
-        final_data = []
-        if os.path.exists(temp_path):
-            with open(temp_path, "r", encoding="utf-8") as f:
-                for line in f: final_data.append(json.loads(line))
-            save_json(final_data, final_path)
-            os.remove(temp_path)
-        if cfg["DEBUG_IMAGE"] and (state["debug_images"] or state["scout_images"]):
-            exporter.save(state["scout_images"] + state["debug_images"], debug_path)
-        logger.info(f"✅ PIPELINE SUCCESS: Result saved to {final_path}")
-    else:
-        logger.warning("⚠️ No data processed. Pipeline finished empty.")
-
-# --- 4. MAIN CONTROLLER ---
 def main():
     start_time = time.perf_counter()
     cfg = get_config()
@@ -182,6 +80,10 @@ def main():
         context = ContextTracker()
         debug_exporter = PDFDebugExporter()
         matcher = None
+
+        page_tracker = PageNumberTracker()
+        pending_pages = []
+        offset_locked = False
 
         with open(temp_jsonl_path, "w", encoding="utf-8") as temp_file:
             for page_no in range(1, total_pages + 1):
@@ -231,7 +133,8 @@ def main():
                 if state["scholar_mode"]:
                     logger.info(f"🎓 Scholar Mode Extraction: Starting PDF Page {page_no}")
                     
-                    printed_no = find_printed_page_no(image, boxes, safe_coords, ocr_engine, classifier, cfg["OCR_ENGINE_TYPE"], height)
+                    detected_no = find_printed_page_no(image, boxes, safe_coords, ocr_engine, classifier, cfg["OCR_ENGINE_TYPE"], height)
+                    printed_no = page_tracker.resolve(page_no, detected_no)
                     current_context_chap = context.state.get("current_chapter_verify", "None")
                     logger.info(f"📑 Context State Check: Printed Page={printed_no} | Active Chapter={current_context_chap}")
 
@@ -275,10 +178,39 @@ def main():
                         })
 
                     page_blocks = bind_figures(page_blocks)
-                    for block in page_blocks:
-                        transformed = transform_structure(block, block_index=state["total_blocks"])
-                        temp_file.write(json.dumps(transformed, ensure_ascii=False) + "\n")
-                        state["total_blocks"] += 1
+                    # ==============================
+                    # BUFFERED WRITE LOGIC
+                    # ==============================
+
+                    if page_tracker.offset is None:
+                        pending_pages.append((page_no, page_blocks))
+                    else:
+                        if not offset_locked:
+                            offset_locked = True
+
+                            logger.info(":repeat: Flushing buffered pages with corrected pagination...")
+
+                            for old_pdf_page, old_blocks in pending_pages:
+                                corrected_page = old_pdf_page + page_tracker.offset
+
+                                for block in old_blocks:
+                                    block["printed_page"] = corrected_page
+                                    transformed = transform_structure(
+                                        block,
+                                        block_index=state["total_blocks"]
+                                    )
+                                    temp_file.write(json.dumps(transformed, ensure_ascii=False) + "\n")
+                                    state["total_blocks"] += 1
+
+                            pending_pages.clear()
+
+                        for block in page_blocks:
+                            transformed = transform_structure(
+                                block,
+                                block_index=state["total_blocks"]
+                            )
+                            temp_file.write(json.dumps(transformed, ensure_ascii=False) + "\n")
+                            state["total_blocks"] += 1
                     
                     temp_file.flush()
                     logger.info(f"💾 Page {page_no} Flushed. Current Block Count: {state['total_blocks']}")
