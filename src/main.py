@@ -39,28 +39,57 @@ def setup_directories(config):
 # --- 2. EXTRACTION LOGIC ---
 def extract_text_block(image, box, safe_coord, models, ocr_engine, ocr_type):
     x1, y1, x2, y2 = map(int, safe_coord)
-    crop = PIL.ImageOps.autocontrast(image.crop((x1, y1, x2, y2)))
     group = LABEL_MAP.get(box.label, "TEXT")
+    
+    # Check for VISUAL/TABLE here to prevent the main loop from calling OCR needlessly
+    if group == "VISUAL":
+        logger.info(f"🖼️  Visual Block Detected [{box.label}]: Skipping OCR.")
+        return "[FIGURE_OR_IMAGE_BLOCK]"
+
+    if group == "TABLE":
+        logger.info(f"📊 Table Block Detected: Skipping standard OCR.")
+        return "[TABLE_BLOCK]"
+
+    # Only crop and process if it's TEXT or MATH
+    crop = PIL.ImageOps.autocontrast(image.crop((x1, y1, x2, y2)))
 
     if group == "MATH":
+        logger.debug(f"📐 Math Block: Routing to RapidLatex")
         res = models.rapid_latex_engine(np.array(crop))
         return res[0] if isinstance(res, tuple) else str(res)
-    else:
-        res_data = models.rapid_text_engine(np.array(crop))
-        if isinstance(res_data, tuple) and res_data[0]:
-            return " ".join([line[1] for line in res_data[0]])
-        return str(res_data)
+
+    # Default to Standard Text
+    logger.debug(f"📝 Text Block: Routing to RapidText")
+    res_data = models.rapid_text_engine(np.array(crop))
+    if isinstance(res_data, tuple) and res_data[0]:
+        return " ".join([line[1] for line in res_data[0]])
+    return str(res_data)
 
 def find_printed_page_no(image, boxes, safe_coords, ocr_engine, classifier, ocr_type, height):
-    for i, box in enumerate(boxes[:3]):
+    # We increase the range slightly just in case a figure is at the top
+    for i, box in enumerate(boxes[:5]): 
+        
+        # --- THE FIX: SKIP VISUAL BLOCKS ---
+        # If the layout engine says this is a picture, don't try to find a page number in it
+        if LABEL_MAP.get(box.label) in ["VISUAL", "TABLE"]:
+            logger.debug(f"⏭️  Skipping page number check for {box.label} block at index {i}")
+            continue
+            
         x1, y1, x2, y2 = map(int, safe_coords[i])
+        
+        # Only check the top 15% of the page
         if y1 < (height * 0.15):
-            p_text = ocr_engine.extract(image.crop((x1, y1, x2, y2)), mode=ocr_type)
+            # Crop and OCR
+            crop_img = image.crop((x1, y1, x2, y2))
+            p_text = ocr_engine.extract(crop_img, mode=ocr_type)
+            
+            # Semantic check
             res = classifier.classify(p_text)
             if res["role"] == "PAGE_NUMBER":
-                # ADDED: Logger for detected page number
-                logger.info(f"🔢 Detected Printed Page Number: {res['page_number']} (from box label: {box.label})")
+                logger.info(f"🔢 Detected Printed Page Number: {res['page_number']} (Block: {box.label})")
                 return res["page_number"]
+                
+    logger.warning("⚠️ No valid text-based page number found in the header area.")
     return None
 
 # --- 3. PIPELINE PHASES ---
@@ -78,7 +107,7 @@ def run_scout_phase(image, boxes, ocr_engine, config, page_no, width, height):
     return False, None
 
 def run_sync_phase(image, boxes, ocr_engine, target_anchor, height, width):
-    for i, box in enumerate(boxes[:5]):
+    for i, box in enumerate(boxes[:3]):
         if box.label in ["SectionHeader", "Text", "Title", "PageHeader"]:
             x1, y1, x2, y2 = map(int, box.bbox)
             if y1 < (height * 0.3):
@@ -124,7 +153,7 @@ def main():
     debug_pdf_path = f"{cfg['pdf_debug_dir']}/{cfg['input_file_name']}_layout_debug.pdf"
 
     state = {
-        "total_blocks": 0,
+        "total_blocks": 1,
         "scholar_mode": False,
         "is_discovering_toc": False,
         "toc_buffer": [],
@@ -198,37 +227,51 @@ def main():
                     else:
                         state["toc_buffer"].append(page_no)
 
-                # PHASE 3: SCHOLAR
+                # --- PHASE 3: SCHOLAR (MODIFIED) ---
                 if state["scholar_mode"]:
-                    # ADDED: Context log for starting Scholar Mode on a specific page
-                    logger.info(f"🎓 Scholar Mode Extraction: PDF Page {page_no}")
+                    logger.info(f"🎓 Scholar Mode Extraction: Starting PDF Page {page_no}")
                     
                     printed_no = find_printed_page_no(image, boxes, safe_coords, ocr_engine, classifier, cfg["OCR_ENGINE_TYPE"], height)
-                    
-                    # ADDED: Verify current chapter state from ContextTracker
                     current_context_chap = context.state.get("current_chapter_verify", "None")
-                    logger.info(f"📑 Context State: Printed Page={printed_no} | Active Chapter={current_context_chap}")
+                    logger.info(f"📑 Context State Check: Printed Page={printed_no} | Active Chapter={current_context_chap}")
 
                     page_blocks = []
+                    
                     for i, box in enumerate(boxes):
-                        if box.label in ["PageFooter", "Footnote"]: continue
-                        
-                        raw_text = extract_text_block(image, box, safe_coords[i], models, ocr_engine, cfg["OCR_ENGINE_TYPE"])
-                        result = classifier.classify(raw_text)
-                        
-                        if result["role"] == "PAGE_NUMBER": 
-                            logger.debug(f"Skip block {i}: Identified as inline Page Number")
+                        if box.label in ["PageFooter", "Footnote"]: 
                             continue
+                        
+                        # 1. Get Text (The function now handles the VISUAL check internally)
+                        raw_text = extract_text_block(image, box, safe_coords[i], models, ocr_engine, cfg["OCR_ENGINE_TYPE"])
+                        
+                        # 2. Determine Semantic Role
+                        # If it's a visual block, we don't need to 'classify' the text
+                        if LABEL_MAP.get(box.label) == "VISUAL":
+                            semantic_role = "FIGURE_BLOCK"
+                            clean_text = "" # Keep text empty for figures
+                        else:
+                            result = classifier.classify(raw_text)
+                            if result["role"] == "PAGE_NUMBER": 
+                                continue
+                            semantic_role = result["role"]
+                            clean_text = result["clean_text"]
 
-                        context.update(result["role"], result["clean_text"])
+                        # 3. Update Context & Hierarchy
+                        context.update(semantic_role, clean_text)
                         node = matcher.resolve_hierarchy(printed_no, context.state["current_chapter_verify"])
 
+                        # 4. Construct Block
                         page_blocks.append({
-                            "pdf_page": page_no, "printed_page": printed_no, "content_label": box.label,
-                            "text": result["clean_text"], "bbox": list(map(int, safe_coords[i])),
-                            "semantic_role": result["role"],
-                            "toc_link": {"chapter_id": node["chapter_id"] if node else None, 
-                                         "chapter_name": node["chapter_name"] if node else None}
+                            "pdf_page": page_no,
+                            "printed_page": printed_no,
+                            "content_label": box.label,
+                            "text": raw_text if semantic_role != "FIGURE_BLOCK" else "",
+                            "bbox": [int(c) for c in safe_coords[i]],
+                            "semantic_role": semantic_role,
+                            "toc_link": {
+                                "chapter_id": node["chapter_id"] if node else None, 
+                                "chapter_name": node["chapter_name"] if node else None
+                            }
                         })
 
                     page_blocks = bind_figures(page_blocks)
