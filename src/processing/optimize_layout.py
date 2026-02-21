@@ -4,7 +4,6 @@ from PIL import ImageDraw, ImageFont
 def get_safe_padding(boxes, image_width, image_height, tolerance=60): # Increased tolerance
     if not boxes: return []
 
-    # --- 1. ROBUST LINE GROUPING ---
     initial_indices = sorted(range(len(boxes)), key=lambda k: boxes[k].bbox[1])
     
     sorted_indices = []
@@ -20,8 +19,7 @@ def get_safe_padding(boxes, image_width, image_height, tolerance=60): # Increase
                 sorted_indices.extend(sorted(current_line, key=lambda k: boxes[k].bbox[0]))
                 current_line = [idx]
         sorted_indices.extend(sorted(current_line, key=lambda k: boxes[k].bbox[0]))
-
-    # --- 2. PADDING LOGIC (From your screenshot fix) ---
+  
     expanded_boxes = []
     for i in range(len(sorted_indices)):
         idx = sorted_indices[i]

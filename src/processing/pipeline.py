@@ -38,7 +38,7 @@ def run_scout_phase(image, boxes, ocr_engine, config, page_no, width, height):
     first_box = boxes[0]
     x1, y1, x2, y2 = map(int, first_box.bbox)
     crop = image.crop((max(0, x1-5), max(0, y1-5), min(width, x2+5), min(height, y2+5)))
-    header_text = ocr_engine.extract(crop, mode="rapid").lower().strip()
+    header_text = ocr_engine.extract(crop, mode="surya").lower().strip()
     logger.info(f"📄 [Page {page_no}] Header Scout: '{header_text}'")
 
     triggers = ["contents", "index"]
@@ -54,7 +54,7 @@ def run_sync_phase(image, boxes, ocr_engine, target_anchor, height, width):
             x1, y1, x2, y2 = map(int, box.bbox)
             if y1 < (height * 0.3):
                 crop = image.crop((max(0, x1-5), max(0, y1-20), min(width, x2+5), min(height, y2+20)))
-                detected_text = ocr_engine.extract(crop, mode="rapid").lower().strip()
+                detected_text = ocr_engine.extract(crop, mode="surya").lower().strip()
                 
                 if detected_text and len(detected_text) > 3:
                     # ADDED: Debug logging for fuzzy matching logic
