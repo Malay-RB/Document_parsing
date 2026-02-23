@@ -11,6 +11,7 @@ from super_image import EdsrModel
 from rapidocr_onnxruntime import RapidOCR
 from rapid_latex_ocr import LaTeXOCR
 
+import easyocr
 
 class ModelLoader:
     _instance = None
@@ -60,6 +61,11 @@ class ModelLoader:
         print("Loading RapidAI Engines...")
         self.rapid_text_engine = RapidOCR()
         self.rapid_latex_engine = LaTeXOCR()
+
+        print(f"Loading EasyOCR ({device.upper()} mode)...")
+        # gpu=True/False depending on your torch device
+        use_gpu = True if device == "cuda" else False
+        self.easyocr_reader = easyocr.Reader(['en'], gpu=use_gpu)
 
         self.initialized = True
         print(f"✅ All models ready ({device.upper()} mode).")

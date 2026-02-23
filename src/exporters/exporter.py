@@ -2,6 +2,7 @@ from PIL import Image
 import json
 from processing.logger import logger
 import os
+from semantics.semantics import transform_structure
 
 
 def save_json(data, path):
@@ -10,8 +11,20 @@ def save_json(data, path):
         json.dump(data, f, indent=4, ensure_ascii=False)
     print(f"✅ Successfully saved json to: {path}")
 
-def finalize_output(state, temp_path, final_path, debug_path, exporter, cfg):
-    if state["total_blocks"] > 0:
+def finalize_output(state, temp_path, final_path, debug_path, exporter, cfg, pending_pages=None, page_tracker=None):
+
+    if pending_pages and temp_path:
+        logger.warning(f"⚠️ Pipeline ended with {len(pending_pages)} pages still in buffer. Flushing now.")
+        with open(temp_path, "a", encoding="utf-8") as f:
+            for pdf_page, blocks in pending_pages:
+                offset = page_tracker.offset if (page_tracker and page_tracker.offset) else 0
+                for block in blocks:
+                    block["printed_page"] = pdf_page + offset
+                    transformed = transform_structure(block, block_index=state["total_blocks"])
+                    f.write(json.dumps(transformed, ensure_ascii=False) + "\n")
+                    state["total_blocks"] += 1
+
+    if state["total_blocks"] > 1:
         logger.info(f"📦 Finalizing {state['total_blocks']} blocks total...")
         final_data = []
         if os.path.exists(temp_path):

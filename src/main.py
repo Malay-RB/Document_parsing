@@ -16,7 +16,7 @@ from processing.ocr_engine import OCREngine
 from processing.structural_matcher import StructuralMatcher
 from processing.toc_api import TOCProcessorAPI
 from processing.optimize_layout import get_safe_padding, draw_layout, filter_overlapping_boxes, get_unified_sorting
-from processing.logger import logger
+from processing.logger import logger, setup_logger
 from processing.page_strategy import find_printed_page_no
 from processing.pipeline import run_scout_phase, run_sync_phase, extract_text_block
 from processing.page_no_tracker import PageNumberTracker
@@ -27,9 +27,12 @@ from config import LABEL_MAP
 
 def get_config():
     return {
+        "LOG_LEVEL": "DEBUG",
         "DEBUG_IMAGE": True,
-        "OCR_ENGINE_TYPE": "rapid",
-        "input_file_name": "MH_5p",
+        "TOC_MODEL": "easy",
+        "EXTRACTION_MODEL": "easy",
+        "USE_PAGE_TRACKER": False,
+        "input_file_name": "ncert10M_8p",
         "json_dir": "output/json",
         "pdf_debug_dir": "output/pdf",
         "scout_limit": 15
@@ -39,10 +42,22 @@ def setup_directories(config):
     os.makedirs(config["json_dir"], exist_ok=True)
     os.makedirs(config["pdf_debug_dir"], exist_ok=True)
 
+def _write_to_disk(blocks, page_val, file_handle, state):
+    """
+    Standardizes the block transformation and writing process.
+    """
+    from semantics.semantics import transform_structure
+    for block in blocks:
+        block["printed_page"] = page_val
+        transformed = transform_structure(block, block_index=state["total_blocks"])
+        file_handle.write(json.dumps(transformed, ensure_ascii=False) + "\n")
+        state["total_blocks"] += 1
+
 
 def main():
     start_time = time.perf_counter()
     cfg = get_config()
+    setup_logger(cfg.get("LOG_LEVEL", "INFO"))
     setup_directories(cfg)
     
     pdf_path = f"input/{cfg['input_file_name']}.pdf"
@@ -73,7 +88,9 @@ def main():
         layout_engine = LayoutEngine(models.layout_predictor)
         ocr_engine = OCREngine(models.recognition_predictor, models.detection_predictor, 
                                 rapid_text_engine=models.rapid_text_engine, 
-                                rapid_latex_engine=models.rapid_latex_engine)
+                                rapid_latex_engine=models.rapid_latex_engine,
+                                easyocr_reader=models.easyocr_reader
+                                )
         
         toc_api = TOCProcessorAPI(ocr_engine)
         classifier = SemanticClassifier()
@@ -97,30 +114,29 @@ def main():
 
                 # PHASE 1: SCOUT
                 if not state["is_discovering_toc"] and not state["scholar_mode"]:
-                    if cfg["DEBUG_IMAGE"]: state["scout_images"].append(draw_layout(image, boxes))
-                    found_toc, _ = run_scout_phase(image, boxes, ocr_engine, cfg, page_no, width, height)
+                    found_toc, _ = run_scout_phase(image, boxes, ocr_engine, cfg["EXTRACTION_MODEL"], page_no, width, height)
                     if found_toc:
                         state["is_discovering_toc"] = True
-                        probe_results, _ = toc_api.run_api([image])
+                        probe_results, _ = toc_api.run_api([image], model=cfg["TOC_MODEL"])
                         if probe_results:
                             state["target_anchor"] = probe_results[0]["chapter_name"].lower()
                             logger.info(f"⚓ ANCHOR IDENTIFIED: '{state['target_anchor']}'")
                         state["toc_buffer"].append(page_no)
+                        if cfg["DEBUG_IMAGE"]: state["scout_images"].append(draw_layout(image, boxes))
                         continue
+                    if cfg["DEBUG_IMAGE"]: state["scout_images"].append(draw_layout(image, boxes))
                     if page_no >= cfg["scout_limit"]:
                         logger.critical(f"❌ Aborted: Contents not found within {cfg['scout_limit']} pages.")
                         return
 
                 # PHASE 2: SYNC
                 elif state["is_discovering_toc"] and not state["scholar_mode"]:
-                    if cfg["DEBUG_IMAGE"]: state["scout_images"].append(draw_layout(image, boxes))
-                    # ADDED: Context log for sync phase
                     logger.info(f"🔍 Sync Phase: Searching for Chapter Anchor '{state['target_anchor']}' on Page {page_no}")
                     
-                    if run_sync_phase(image, boxes, ocr_engine, state["target_anchor"], height, width):
+                    if run_sync_phase(image, boxes, ocr_engine, cfg["EXTRACTION_MODEL"], state["target_anchor"], height, width):
                         logger.info(f"🎓 Scholar Mode Transition Triggered at Page {page_no}")
                         toc_pages = [pdf_loader.load_page(p) for p in state["toc_buffer"]]
-                        toc_data, _ = toc_api.run_api(toc_pages, debug=cfg["DEBUG_IMAGE"])
+                        toc_data, _ = toc_api.run_api(toc_pages, debug=cfg["DEBUG_IMAGE"], model = cfg["TOC_MODEL"])
                         matcher = StructuralMatcher(toc_data=toc_data)
                         state["scholar_mode"] = True
                         state["is_discovering_toc"] = False
@@ -128,15 +144,22 @@ def main():
                         gc.collect()
                     else:
                         state["toc_buffer"].append(page_no)
+                        if cfg["DEBUG_IMAGE"]: state["scout_images"].append(draw_layout(image, boxes))
+                        continue
 
                 # --- PHASE 3: SCHOLAR (MODIFIED) ---
                 if state["scholar_mode"]:
                     logger.info(f"🎓 Scholar Mode Extraction: Starting PDF Page {page_no}")
                     
-                    detected_no = find_printed_page_no(image, boxes, safe_coords, ocr_engine, classifier, cfg["OCR_ENGINE_TYPE"], height)
-                    printed_no = page_tracker.resolve(page_no, detected_no)
-                    current_context_chap = context.state.get("current_chapter_verify", "None")
-                    logger.info(f"📑 Context State Check: Printed Page={printed_no} | Active Chapter={current_context_chap}")
+                    detected_no = find_printed_page_no(image, boxes, safe_coords, ocr_engine, classifier, cfg["EXTRACTION_MODEL"], height, strategy="HEADER")
+                    if not cfg.get("USE_PAGE_TRACKER", True):
+                        # DIRECT MODE: Trust detection or fallback to PDF page immediately
+                        printed_no = detected_no if detected_no is not None else page_no
+                        is_ready_to_write = True
+                    else:
+                        # TRACKER MODE: Use math to resolve gaps
+                        printed_no = page_tracker.resolve(page_no, detected_no)
+                        is_ready_to_write = (page_tracker.offset is not None)
 
                     page_blocks = []
                     
@@ -145,7 +168,7 @@ def main():
                             continue
                         
                         # 1. Get Text (The function now handles the VISUAL check internally)
-                        raw_text = extract_text_block(image, box, safe_coords[i], models, ocr_engine, cfg["OCR_ENGINE_TYPE"])
+                        raw_text = extract_text_block(image, box, safe_coords[i], models, ocr_engine, cfg["EXTRACTION_MODEL"])
                         
                         # 2. Determine Semantic Role
                         # If it's a visual block, we don't need to 'classify' the text
@@ -178,43 +201,29 @@ def main():
                         })
 
                     page_blocks = bind_figures(page_blocks)
-                    # ==============================
-                    # BUFFERED WRITE LOGIC
-                    # ==============================
-
-                    if page_tracker.offset is None:
-                        pending_pages.append((page_no, page_blocks))
-                    else:
-                        if not offset_locked:
+                    # 4. Storage Handling (The Buffer vs. Direct logic)
+                    if is_ready_to_write:
+                        # If Tracker just found the offset, empty the "Waiting Room" (Buffer) first
+                        if cfg.get("USE_PAGE_TRACKER") and not offset_locked:
                             offset_locked = True
-
-                            logger.info(":repeat: Flushing buffered pages with corrected pagination...")
-
-                            for old_pdf_page, old_blocks in pending_pages:
-                                corrected_page = old_pdf_page + page_tracker.offset
-
-                                for block in old_blocks:
-                                    block["printed_page"] = corrected_page
-                                    transformed = transform_structure(
-                                        block,
-                                        block_index=state["total_blocks"]
-                                    )
-                                    temp_file.write(json.dumps(transformed, ensure_ascii=False) + "\n")
-                                    state["total_blocks"] += 1
-
+                            logger.info("🔓 Pagination Offset Locked. Flushing buffer...")
+                            for old_pdf, old_blocks in pending_pages:
+                                # Calculate the correct printed number for buffered pages
+                                corrected_val = old_pdf + page_tracker.offset
+                                _write_to_disk(old_blocks, corrected_val, temp_file, state)
                             pending_pages.clear()
-
-                        for block in page_blocks:
-                            transformed = transform_structure(
-                                block,
-                                block_index=state["total_blocks"]
-                            )
-                            temp_file.write(json.dumps(transformed, ensure_ascii=False) + "\n")
-                            state["total_blocks"] += 1
-                    
-                    temp_file.flush()
-                    logger.info(f"💾 Page {page_no} Flushed. Current Block Count: {state['total_blocks']}")
+                        
+                        # Write the current page immediately
+                        _write_to_disk(page_blocks, printed_no, temp_file, state)
+                    else:
+                        # If we are in Tracker mode but offset isn't found, add to buffer
+                        pending_pages.append((page_no, page_blocks))
+                        logger.info(f"📥 Page {page_no} held in buffer (awaiting offset).")
+                        
                     if cfg["DEBUG_IMAGE"]: state["debug_images"].append(draw_layout(image, boxes))
+
+                    temp_file.flush()
+                    logger.info(f"💾 Current Block Count: {state['total_blocks']}")
 
                 # Per-Page Release
                 del image
@@ -227,7 +236,7 @@ def main():
     except Exception as e:
         logger.critical(f"🛑 FATAL: {str(e)}", exc_info=True)
     finally:
-        finalize_output(state, temp_jsonl_path, output_path, debug_pdf_path, debug_exporter, cfg)
+        finalize_output(state, temp_jsonl_path, output_path, debug_pdf_path, debug_exporter, cfg, pending_pages=pending_pages,page_tracker=page_tracker)
 
     print(f"\n⏱️  Total Runtime: {time.perf_counter() - start_time:.2f} seconds.")
 

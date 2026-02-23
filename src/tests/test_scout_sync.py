@@ -45,7 +45,8 @@ def run_scout_sync_test(pdf_name):
             recognition_predictor=models.recognition_predictor,
             detection_predictor=models.detection_predictor,
             rapid_text_engine=models.rapid_text_engine,
-            rapid_latex_engine=models.rapid_latex_engine
+            rapid_latex_engine=models.rapid_latex_engine,
+            easyocr_reader=models.easyocr_reader
         )
         
         toc_api = TOCProcessorAPI(ocr_engine)
@@ -125,4 +126,4 @@ def run_scout_sync_test(pdf_name):
 
 if __name__ == "__main__":
     # Ensure you have a file named MH_5p.pdf in your /input directory
-    run_scout_sync_test("MH_5p")
+    run_scout_sync_test("ncert10M_8p")

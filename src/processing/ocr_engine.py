@@ -1,26 +1,39 @@
 import numpy as np
 import PIL.Image as Image
 from processing.logger import logger
+import re
 
 class OCREngine:
-    def __init__(self, recognition_predictor, detection_predictor, rapid_text_engine=None, rapid_latex_engine=None):
-        # We store these exactly as ModelLoader names them
+    def __init__(self, recognition_predictor, detection_predictor, 
+                 rapid_text_engine=None, rapid_latex_engine=None, 
+                 easyocr_reader=None):
+        # Surya Models
         self.recognition_predictor = recognition_predictor
         self.detection_predictor = detection_predictor
+        
+        # Rapid Engines
         self.rapid_text = rapid_text_engine
         self.rapid_latex = rapid_latex_engine
+        
+        # EasyOCR
+        self.easyocr = easyocr_reader
 
-    def extract(self, crop, mode="surya", is_math=False):
-        # Ensure we have a PIL Image for Surya, but numpy for Rapid
+    def extract(self, crop, model, is_math=False):
+        """
+        Extracts text based on the specified mode.
+        Models: 'surya', 'rapid', 'easy'
+        """
+        
+        # Pre-processing: Prepare numpy for Easy/Rapid and PIL for Surya
         if isinstance(crop, np.ndarray):
-            pil_crop = Image.fromarray(crop)
+            pil_crop = Image.fromarray(crop).convert("RGB")
             np_crop = crop
         else:
-            pil_crop = crop
+            pil_crop = crop.convert("RGB")
             np_crop = np.array(crop)
 
-        # CASE 1: RAPID OCR
-        if mode == "rapid":
+        # --- CASE 1: RAPID OCR ---
+        if model == "rapid":
             if is_math and self.rapid_latex:
                 res = self.rapid_latex(np_crop)
                 return res[0] if isinstance(res, tuple) else str(res)
@@ -30,29 +43,34 @@ class OCREngine:
                     return " ".join([line[1] for line in res[0]])
             return ""
 
-        # CASE 2: SURYA OCR (High Accuracy Default)
-        if self.recognition_predictor and self.detection_predictor:
+        # --- CASE 2: SURYA OCR ---
+        elif model == "surya":
+            if not (self.recognition_predictor and self.detection_predictor):
+                logger.error("Surya models not initialized.")
+                return ""
             try:
-                # We let recognition_predictor handle detection internally 
-                # by passing the det_predictor object directly.
-                # This bypasses the 'unhashable list' error caused by manual bbox passing.
-                
                 predictions = self.recognition_predictor(
                     [pil_crop], 
                     det_predictor=self.detection_predictor
                 )
-                
-                if not predictions or len(predictions) == 0:
-                    return ""
-                
-                # Extract text from the first image result
-                res = predictions[0]
-                return " ".join([line.text for line in res.text_lines])
-                
+                if predictions:
+                    return " ".join([line.text for line in predictions[0].text_lines])
             except Exception as e:
                 logger.error(f"Surya extraction failed: {e}")
-                # Fallback to Rapid if Surya fails
-                # logger.info("Attempting RapidOCR fallback...")
-                # return self.extract(crop, mode="rapid")
-            
+            return ""
+
+        # --- CASE 3: EASY OCR ---
+        elif model == "easy":
+            if not self.easyocr:
+                logger.error("EasyOCR not initialized.")
+                return ""
+            # readtext handles numpy arrays directly
+            results = self.easyocr.readtext(np_crop, detail=0)
+            text = " ".join(results) if results else ""
+        
+            if re.match(r'^[\d\s]+$', text):
+                text = text.replace(" ", "")
+            return text
+
+        # No valid mode selected or engine missing
         return ""
