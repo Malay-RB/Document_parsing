@@ -66,6 +66,6 @@ def extract_text_block(image, box, safe_coord, models, ocr_engine, ocr_type):
         return res[0] if isinstance(res, tuple) else str(res)
 
     # Default to Standard Text
-    logger.debug(f"📝 Text Block: Routing to RapidText")
+    logger.debug(f"📝 Text Block: Routing to {ocr_type}")
     text_result = ocr_engine.extract(crop, model=ocr_type)
     return str(text_result)
