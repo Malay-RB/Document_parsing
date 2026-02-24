@@ -5,33 +5,6 @@ import PIL.ImageOps
 import re
 
 
-
-def extract_text_block(image, box, safe_coord, models, ocr_engine, ocr_type):
-    x1, y1, x2, y2 = map(int, safe_coord)
-    group = LABEL_MAP.get(box.label, "TEXT")
-    
-    # Check for VISUAL/TABLE here to prevent the main loop from calling OCR needlessly
-    if group == "VISUAL":
-        logger.info(f"🖼️  Visual Block Detected [{box.label}]: Skipping OCR.")
-        return "[FIGURE_OR_IMAGE_BLOCK]"
-
-    if group == "TABLE":
-        logger.info(f"📊 Table Block Detected: Skipping standard OCR.")
-        return "[TABLE_BLOCK]"
-
-    # Only crop and process if it's TEXT or MATH
-    crop = PIL.ImageOps.autocontrast(image.crop((x1, y1, x2, y2)))
-
-    if group == "MATH":
-        logger.debug(f"📐 Math Block: Routing to RapidLatex")
-        res = models.rapid_latex_engine(np.array(crop))
-        return res[0] if isinstance(res, tuple) else str(res)
-
-    # Default to Standard Text
-    logger.debug(f"📝 Text Block: Routing to RapidText")
-    text_result = ocr_engine.extract(crop, model=ocr_type)
-    return str(text_result)
-
 def run_scout_phase(image, boxes, ocr_engine, model, page_no, width, height):
     logger.info(f"Using '{model}' for scout phase")
     if not boxes: return False, None
@@ -70,3 +43,29 @@ def run_sync_phase(image, boxes, ocr_engine, model, target_anchor, height, width
                         logger.info(f"✅ SYNC MATCH: Anchor '{target_anchor}' found in '{detected_text}'")
                         return True
     return False
+
+def extract_text_block(image, box, safe_coord, models, ocr_engine, ocr_type):
+    x1, y1, x2, y2 = map(int, safe_coord)
+    group = LABEL_MAP.get(box.label, "TEXT")
+    
+    # Check for VISUAL/TABLE here to prevent the main loop from calling OCR needlessly
+    if group == "VISUAL":
+        logger.info(f"🖼️  Visual Block Detected [{box.label}]: Skipping OCR.")
+        return "[FIGURE_OR_IMAGE_BLOCK]"
+
+    if group == "TABLE":
+        logger.info(f"📊 Table Block Detected: Skipping standard OCR.")
+        return "[TABLE_BLOCK]"
+
+    # Only crop and process if it's TEXT or MATH
+    crop = PIL.ImageOps.autocontrast(image.crop((x1, y1, x2, y2)))
+
+    if group == "MATH":
+        logger.debug(f"📐 Math Block: Routing to RapidLatex")
+        res = models.rapid_latex_engine(np.array(crop))
+        return res[0] if isinstance(res, tuple) else str(res)
+
+    # Default to Standard Text
+    logger.debug(f"📝 Text Block: Routing to RapidText")
+    text_result = ocr_engine.extract(crop, model=ocr_type)
+    return str(text_result)

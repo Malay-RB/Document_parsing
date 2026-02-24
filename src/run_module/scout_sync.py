@@ -9,8 +9,8 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from loaders.model_loader import ModelLoader
 from loaders.pdfium_loader import PDFLoader  # Ensure this points to your updated loader
-from processing.layout_engine import LayoutEngine
-from processing.ocr_engine import OCREngine
+from engine.layout_engine import LayoutEngine
+from engine.ocr_engine import OCREngine
 from processing.pipeline import run_scout_phase, run_sync_phase
 from processing.toc_api import TOCProcessorAPI
 from processing.logger import logger

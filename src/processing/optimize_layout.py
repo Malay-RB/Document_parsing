@@ -62,7 +62,11 @@ def filter_overlapping_boxes(boxes, threshold=0.8):
     
     # Sort boxes by area (descending) so we keep larger containers if needed
     # or sort by confidence if your model provides it.
-    sorted_boxes = sorted(boxes, key=lambda b: (b.bbox[2]-b.bbox[0]) * (b.bbox[3]-b.bbox[1]), reverse=True)
+    sorted_boxes = sorted(
+        boxes,
+        key=lambda b: (b.bbox[2]-b.bbox[0]) * (b.bbox[3]-b.bbox[1]),
+        reverse=True
+    )
     keep = []
     
     for i, current in enumerate(sorted_boxes):
@@ -110,7 +114,7 @@ def get_unified_sorting(raw_boxes, tolerance=30):
 
         # same row
         if abs(curr_y - prev_y) <= tolerance:
-            current_row = [box]   # or current_row = [box]
+            current_row.append(box) # or current_row = [box]
         else:
             rows.append(current_row)
             current_row = [box]

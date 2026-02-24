@@ -1,7 +1,7 @@
 from loaders.pdfium_loader import PDFLoader
 from loaders.model_loader import ModelLoader
-from processing.layout_engine import LayoutEngine
-from processing.ocr_engine import OCREngine
+from engine.layout_engine import LayoutEngine
+from engine.ocr_engine import OCREngine
 from processing.pipeline import run_scout_phase
 
 # Load tools

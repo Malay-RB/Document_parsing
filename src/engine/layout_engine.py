@@ -8,7 +8,8 @@ class LayoutEngine:
 
         layout = self.predictor([image])[0]
 
-        return sorted(
-            layout.bboxes,
-            key=lambda b: (b.bbox[1] // 20, b.bbox[0])
-        )
+        # return sorted(
+        #     layout.bboxes,
+        #     key=lambda b: (b.bbox[1] // 20, b.bbox[0])
+        # )
+        return layout.bboxes

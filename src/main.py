@@ -11,8 +11,8 @@ import json
 from loaders.model_loader import ModelLoader
 from loaders.pdfium_loader import PDFLoader
 from processing.enhancer import ImageEnhancer
-from processing.layout_engine import LayoutEngine
-from processing.ocr_engine import OCREngine
+from engine.layout_engine import LayoutEngine
+from engine.ocr_engine import OCREngine
 from processing.structural_matcher import StructuralMatcher
 from processing.toc_api import TOCProcessorAPI
 from processing.optimize_layout import get_safe_padding, draw_layout, filter_overlapping_boxes, get_unified_sorting
@@ -32,7 +32,7 @@ def get_config():
         "TOC_MODEL": "easy",
         "EXTRACTION_MODEL": "easy",
         "USE_PAGE_TRACKER": False,
-        "input_file_name": "ncert10M_8p",
+        "input_file_name": "MH_5p",
         "json_dir": "output/json",
         "pdf_debug_dir": "output/pdf",
         "scout_limit": 15
@@ -46,7 +46,6 @@ def _write_to_disk(blocks, page_val, file_handle, state):
     """
     Standardizes the block transformation and writing process.
     """
-    from semantics.semantics import transform_structure
     for block in blocks:
         block["printed_page"] = page_val
         transformed = transform_structure(block, block_index=state["total_blocks"])
@@ -164,8 +163,8 @@ def main():
                     page_blocks = []
                     
                     for i, box in enumerate(boxes):
-                        if box.label in ["PageFooter", "Footnote"]: 
-                            continue
+                        # if box.label in ["PageFooter", "Footnote"]: 
+                        #     continue
                         
                         # 1. Get Text (The function now handles the VISUAL check internally)
                         raw_text = extract_text_block(image, box, safe_coords[i], models, ocr_engine, cfg["EXTRACTION_MODEL"])
@@ -219,7 +218,7 @@ def main():
                         # If we are in Tracker mode but offset isn't found, add to buffer
                         pending_pages.append((page_no, page_blocks))
                         logger.info(f"📥 Page {page_no} held in buffer (awaiting offset).")
-                        
+
                     if cfg["DEBUG_IMAGE"]: state["debug_images"].append(draw_layout(image, boxes))
 
                     temp_file.flush()

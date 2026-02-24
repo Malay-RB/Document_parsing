@@ -18,7 +18,13 @@ class OCREngine:
         # EasyOCR
         self.easyocr = easyocr_reader
 
-    def extract(self, crop, model, is_math=False):
+        self.pdf_page_obj = None
+
+    def set_plumber_page(self, page):
+        """Helper to sync the current pdfplumber page object"""
+        self.pdf_page_obj = page
+
+    def extract(self, crop, model, is_math=False, bbox=None):
         """
         Extracts text based on the specified mode.
         Models: 'surya', 'rapid', 'easy'
@@ -71,6 +77,18 @@ class OCREngine:
             if re.match(r'^[\d\s]+$', text):
                 text = text.replace(" ", "")
             return text
+        
+        if model == "plumber":
+            if not self.pdf_page_obj:
+                logger.error("pdfplumber page not set. Falling back to 'easy'.")
+                return self.extract(crop, "easy", is_math)
+            
+            if bbox:
+                # pdfplumber uses (x0, y0, x1, y1)
+                cropped_page = self.pdf_page_obj.crop(bbox)
+                text = cropped_page.extract_text()
+                return text.strip() if text else ""
+            return ""
 
         # No valid mode selected or engine missing
         return ""
