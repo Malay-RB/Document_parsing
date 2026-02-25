@@ -51,7 +51,12 @@ def draw_layout(image, boxes):
         font = ImageFont.load_default()
 
     for i, box in enumerate(boxes):
-        x1, y1, x2, y2 = map(int, box.bbox)
+        # --- FIX: Ensure y1 >= y0 and x1 >= x0 for PIL ---
+        x_min, y_min, x_max, y_max = box.bbox
+        x1, x2 = min(x_min, x_max), max(x_min, x_max)
+        y1, y2 = min(y_min, y_max), max(y_min, y_max)
+        
+        # Draw using the sanitized coordinates
         draw.rectangle((x1, y1, x2, y2), outline="red", width=2)
         draw.text((x1, y1 - 18), f"{i+1}:{box.label}", fill="red", font=font)
     return debug_img

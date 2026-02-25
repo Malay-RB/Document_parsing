@@ -18,15 +18,16 @@ from processing.optimize_layout import filter_overlapping_boxes, get_unified_sor
 from semantics.semantics import SemanticClassifier, transform_structure
 from exporters.exporter import PDFDebugExporter
 from processing.logger import logger, setup_logger
+from config import LABEL_MAP
 
-def run_deep_extraction(pdf_filename):
+def run_deep_extraction(pdf_filename, start_page=1):
     """
     Standalone Phase 3 Module.
     Focus: OCR-based page detection + Backtracking Buffer.
     """
     # 1. Setup Environment
     setup_logger("INFO")
-    output_dir = "run_module/output"
+    output_dir = "modules/output"
     os.makedirs(output_dir, exist_ok=True)
     
     pdf_path = f"input/{pdf_filename}.pdf"
@@ -38,7 +39,7 @@ def run_deep_extraction(pdf_filename):
         return
 
     # 2. Initialize Models & Loaders (Standalone initialization)
-    print(f"\n{'='*60}\n🚀 STANDALONE DEEP EXTRACTION: {pdf_filename}\n{'='*60}\n")
+    print(f"\n{'='*60}\n🚀 DEEP EXTRACTION: {pdf_filename}\n{'='*60}\n")
     
     pdf_loader = PDFLoader(scale=3.5)
     pdf_loader.open(pdf_path)
@@ -68,6 +69,7 @@ def run_deep_extraction(pdf_filename):
 
     try:
         for page_no in range(1, total_pages + 1):
+            logger.info(f"📄 Deep Extraction: Physical Page {page_no}/{total_pages}")
             print(f"📄 Processing Page {page_no}/{total_pages}...")
             
             image = pdf_loader.load_page(page_no)
@@ -95,17 +97,31 @@ def run_deep_extraction(pdf_filename):
             for i, box in enumerate(boxes):
                 text_content = extract_text_block(image, box, safe_coords[i], models, ocr_engine, ocr_type="easy")
                 
-                # Filter out the page number block from body text
-                if raw_detected_no and str(raw_detected_no) in text_content.strip():
-                    continue
+                # 1. Use the classifier to check for Page Number blocks
+                res = classifier.classify(text_content)
 
+                # 2. If the classifier says it's a PAGE_NUMBER, we don't add it as a block,
+                # but we've already used its value in 'printed_no' via the tracker.
+                if res["role"] == "PAGE_NUMBER":
+                    continue 
+
+                # 3. Determine semantic role for actual content
+                if LABEL_MAP.get(box.label) == "VISUAL":
+                    role = "FIGURE_BLOCK"
+                    clean_text = ""
+                else:
+                    role = res["role"]
+                    clean_text = res["clean_text"]
+
+                # 4. Construct the block with your specific metadata requirements
                 block_data = {
                     "pdf_page": page_no,
-                    "printed_page": printed_no,
+                    "printed_page": printed_no,  
                     "content_label": box.label,
-                    "text": text_content,
+                    "text": clean_text,
                     "bbox": safe_coords[i],
-                    "semantic_role": "TEXT" 
+                    "semantic_role": role,
+                    "toc_link": {"chapter_id": None, "chapter_name": None} # Placeholder for final merge
                 }
                 current_page_blocks.append(block_data)
 
@@ -156,6 +172,8 @@ def run_deep_extraction(pdf_filename):
         logger.error(f"🛑 Standalone Error: {str(e)}", exc_info=True)
     finally:
         pdf_loader.close()
+
+    return final_results
 
 if __name__ == "__main__":
     # Change this to your filename

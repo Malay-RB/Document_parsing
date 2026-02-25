@@ -1,5 +1,7 @@
 src/output
+src/modules/output
 .venv
 src/toc_scout_demo.py
 src/input
 src/logs
+__pycache__/

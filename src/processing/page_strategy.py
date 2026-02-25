@@ -27,23 +27,25 @@ def _extract_page_val(p_text, classifier, context_label):
     return None
 
 def _detect_from_header(image, boxes, safe_coords, ocr_engine, classifier, ocr_type, height):
-    if not boxes:
-        return None
+    # Check first 8 boxes 
+    for i, box in enumerate(boxes[:8]):
+        # FIX: Handle if box is an object or a list/dict
+        label = getattr(box, 'label', None) 
+        if label is None and isinstance(box, dict):
+            label = box.get('label')
+        # If it's a list from Surya [x1, y1, x2, y2, conf, label]
+        elif label is None and isinstance(box, (list, tuple)):
+            label = box[-1] 
 
-    logger.debug(f"🔍 Header Scan: Targeting ONLY the 1st block.")
-    
-    # Logic: Only check boxes[0]
-    box = boxes[:2]
-    if LABEL_MAP.get(box.label) == "VISUAL":
-        logger.debug("  ∟ [Header Box 0] is VISUAL. Skipping.")
-        return None
+        if LABEL_MAP.get(label) == "VISUAL":
+            continue
             
-    x1, y1, x2, y2 = map(int, safe_coords[0])
-    p_text = ocr_engine.extract(image.crop((x1, y1, x2, y2)), model=ocr_type).strip()
-    
-    logger.debug(f"  ∟ [Header Box 0] Label: {box.label} | Text: '{p_text}' | Bbox: {[x1, y1, x2, y2]}")
-    
-    return _extract_page_val(p_text, classifier, "Header")
+        x1, y1, x2, y2 = map(int, safe_coords[i])
+        p_text = ocr_engine.extract(image.crop((x1, y1, x2, y2)), model=ocr_type).strip()
+        
+        logger.debug(f"  ∟ [Header Box 0] Label: {box.label} | Text: '{p_text}' | Bbox: {[x1, y1, x2, y2]}")
+        
+        return _extract_page_val(p_text, classifier, "Header")
 
 def _detect_from_footer(image, boxes, safe_coords, ocr_engine, classifier, ocr_type, height):
     logger.debug(f"🔍 Checking Footer: Targeting ONLY the last 2 blocks.")
