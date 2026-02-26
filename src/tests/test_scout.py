@@ -2,7 +2,7 @@ from loaders.pdfium_loader import PDFLoader
 from loaders.model_loader import ModelLoader
 from engine.layout_engine import LayoutEngine
 from engine.ocr_engine import OCREngine
-from processing.pipeline import run_scout_phase
+from processing.pipeline_utils import run_scout_phase
 
 # Load tools
 loader = PDFLoader(scale=3.5)

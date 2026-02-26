@@ -1,7 +1,7 @@
 import PIL.Image as Image
 from loaders.model_loader import ModelLoader
 from engine.ocr_engine import OCREngine
-from processing.pipeline import extract_text_block
+from processing.pipeline_utils import extract_text_block
 
 # 1. Load Models once
 models = ModelLoader().load()

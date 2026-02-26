@@ -20,9 +20,12 @@ class OCREngine:
 
         self.pdf_page_obj = None
 
+        
+    
     def set_plumber_page(self, page):
         """Helper to sync the current pdfplumber page object"""
         self.pdf_page_obj = page
+
 
     def extract(self, crop, model, is_math=False, bbox=None):
         """

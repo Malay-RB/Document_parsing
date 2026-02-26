@@ -13,14 +13,16 @@ from loaders.pdfium_loader import PDFLoader
 from engine.layout_engine import LayoutEngine
 from engine.ocr_engine import OCREngine
 from modules.toc_extractor import TOCProcessorAPI
-from processing.pipeline import run_scout_phase, run_sync_phase
-from processing.optimize_layout import filter_overlapping_boxes, get_unified_sorting, draw_layout
+from processing.pipeline_utils import run_scout_phase, run_sync_phase
+from processing.optimize_layout import filter_overlapping_boxes, get_unified_sorting
 from exporters.exporter import PDFDebugExporter
 from processing.logger import logger, setup_logger
+from processing.performance_track import track_telemetry
 
+@track_telemetry
 def run_scout_sync(pdf_name):
     # --- 1. CONFIGURATION ---
-    setup_logger("INFO")
+    # setup_logger("INFO")  <-- Removed internal initialization
     pdf_path = f"input/{pdf_name}.pdf"
     scout_limit = 15
     extraction_model = "easy" 
@@ -30,16 +32,17 @@ def run_scout_sync(pdf_name):
     debug_path = f"{output_dir}/{pdf_name}_scout_debug.pdf"
 
     if not os.path.exists(pdf_path):
-        print(f"❌ Error: {pdf_path} not found.")
+        logger.error(f"❌ Error: {pdf_path} not found.")
         return
 
-    print(f"\n{'='*60}\n🛰️  SCOUT & SYNC TRACKER: {pdf_name}\n{'='*60}\n")
+    logger.info(f"🛰️  SCOUT & SYNC TRACKER START: {pdf_name}")
 
     # --- 2. INITIALIZATION ---
     pdf_loader = PDFLoader(scale=3.5)
     pdf_loader.open(pdf_path)
     total_pages = pdf_loader.get_total_pages()
 
+    logger.info("⚙️  Loading Scout Models...")
     models = ModelLoader().load()
     layout_engine = LayoutEngine(models.layout_predictor)
     ocr_engine = OCREngine(
@@ -49,7 +52,7 @@ def run_scout_sync(pdf_name):
         rapid_latex_engine=models.rapid_latex_engine,
         easyocr_reader=models.easyocr_reader
     )
-    # We only use the API for the initial "Anchor Probe"
+    
     toc_api = TOCProcessorAPI(ocr_engine)
 
     state = {
@@ -63,7 +66,8 @@ def run_scout_sync(pdf_name):
 
     try:
         for page_no in range(1, total_pages + 1):
-            print(f"📄 Scanning Page {page_no}/{total_pages}...", end="\r")
+            # DEBUG: Keep the scan loop out of the clean INFO log
+            logger.debug(f"📄 Scanning Page {page_no}/{total_pages}...")
             
             image = pdf_loader.load_page(page_no)
             width, height = image.size
@@ -76,46 +80,50 @@ def run_scout_sync(pdf_name):
                 found_toc, trigger_text = run_scout_phase(image, boxes, ocr_engine, extraction_model, page_no, width, height)
                 
                 if found_toc:
-                    print(f"\n🎯 SCOUT TRIGGERED! '{trigger_text}' on Page {page_no}")
+                    logger.info(f"🎯 SCOUT TRIGGERED! '{trigger_text}' identified on Page {page_no}")
                     state["is_discovering_toc"] = True
+                    
+                    # We capture the visual layout for debugging
+                    from processing.optimize_layout import draw_layout
                     state["scout_images"].append(draw_layout(image, boxes))
                     
                     # PROBE ONLY: Just to get the anchor name
+                    logger.debug(f"🔍 Probing Page {page_no} for Anchor text...")
                     probe_results, debug_frames = toc_api.run_api([image], debug=True, model=extraction_model)
                     if debug_frames: state["debug_images"].extend(debug_frames)
 
                     if probe_results:
                         state["target_anchor"] = probe_results[0]["chapter_name"].lower()
-                        print(f"⚓ ANCHOR CAPTURED: '{state['target_anchor']}'")
+                        logger.info(f"⚓ ANCHOR CAPTURED: '{state['target_anchor']}'")
                     else:
+                        logger.warning(f"⚠️ Trigger found but TOC Probe failed on Page {page_no}.")
                         state["is_discovering_toc"] = False
                     
                     state["toc_buffer"].append(page_no)
                     continue
                 
                 if page_no >= scout_limit:
-                    print(f"\n❌ FAILURE: Scout limit reached.")
+                    logger.error(f"❌ FAILURE: Scout limit ({scout_limit}) reached without finding TOC.")
                     break
 
             # --- PHASE 2: SYNC (Anchor Tracking) ---
             else:
+                # Inside run_sync_phase, we should use logger.debug for individual block checks
                 if run_sync_phase(image, boxes, ocr_engine, extraction_model, state["target_anchor"], height, width):
-                    print(f"\n✅ SYNC SUCCESSFUL!")
-                    print(f"   ∟ Physical Page where Book Starts: {page_no}")
-                    print(f"   ∟ TOC Page Range Identified: {state['toc_buffer']}")
+                    logger.info(f"✅ SYNC SUCCESSFUL! Match found on Physical Page: {page_no}")
                     
+                    from processing.optimize_layout import draw_layout
                     state["scout_images"].append(draw_layout(image, boxes))
                     state["sync_completed"] = True
-                    
-                    # STOP HERE: We do not run the full TOC extraction.
                     break 
                 else:
                     state["toc_buffer"].append(page_no)
+                    logger.debug(f"⏳ Page {page_no}: Still in TOC range, anchor not yet found in content.")
 
             del image
             if page_no % 5 == 0: gc.collect()
 
-        # --- 3. FINAL SUMMARY (No extraction) ---
+        # --- 3. FINAL SUMMARY ---
         if state["sync_completed"]:
             tracking_report = {
                 "pdf_filename": pdf_name,
@@ -128,18 +136,21 @@ def run_scout_sync(pdf_name):
             with open(report_path, "w") as f:
                 json.dump(tracking_report, f, indent=4)
             
-            print(f"\n📊 TRACKING REPORT SAVED: {report_path}")
+            logger.info(f"📊 SYNC REPORT SAVED: {report_path}")
             return tracking_report
 
-        # Save minimal debug visuals
+        # Save minimal debug visuals if sync failed
         all_visuals = state["scout_images"] + state["debug_images"]
         if all_visuals:
             PDFDebugExporter().save(all_visuals, debug_path)
+            logger.debug(f"🖼️ Debug visuals saved to: {debug_path}")
 
     except Exception as e:
-        print(f"\n💥 ERROR: {str(e)}")
+        logger.critical(f"💥 SCOUT/SYNC CRITICAL ERROR: {str(e)}", exc_info=True)
     finally:
         pdf_loader.close()
 
 if __name__ == "__main__":
+    # Standalone mode: setup logger with debug
+    setup_logger(debug_mode=True)
     run_scout_sync("ncert10M_8p")

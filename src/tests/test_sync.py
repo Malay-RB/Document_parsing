@@ -1,4 +1,4 @@
-from processing.pipeline import run_sync_phase
+from processing.pipeline_utils import run_sync_phase
 # You can even test this WITHOUT models by creating mock boxes
 
 class MockBox:
