@@ -55,3 +55,7 @@ priority = "explicit"
 torch = {source = "pytorch"}
 torchvision = {source = "pytorch"}
 torchaudio = {source = "pytorch"}
+
+[tool.poetry.group.dev.dependencies]
+pip-audit = "^2.10.0"
+

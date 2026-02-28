@@ -251,4 +251,4 @@ def run_standalone_toc(pdf_name, page_list=None):
     logger.info(f"✅ Extraction Successful: Saved to {out_file}")
 
 if __name__ == "__main__":
-    run_standalone_toc("ncert10M_8p")
+    run_standalone_toc("TOC_CBSE_Math")

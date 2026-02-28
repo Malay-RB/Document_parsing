@@ -4,4 +4,11 @@ src/modules/output
 src/toc_scout_demo.py
 src/input
 src/logs
-__pycache__/
+src/logs_perf
+src/tests/test_output
+**/__pycache__/
+*.py[cod]
+.ruff_cache/
+.bandit/
+.pytest_cache/
+.coverage
