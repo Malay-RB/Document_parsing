@@ -1,0 +1,15 @@
+2026-02-27 08:28:43 | START | run_scout_sync            | Time: 08:28:43 | File: N/A
+2026-02-27 08:33:01 | START | run_api                   | Time: 08:33:00 | File: 11.22 MB
+2026-02-27 08:33:45 | END   | run_api                   | Duration: 44.9337s | In-Mem: 18.33 MB | Out-Mem: 11.22 MB (STREAM TOTAL)
+2026-02-27 08:36:41 | DONE  | run_scout_sync            | Duration: 478.3368s | In-Mem: 0.16 KB | Out-Mem: 0.71 KB
+2026-02-27 08:36:48 | START | run_api                   | Time: 08:36:48 | File: 44.88 MB
+2026-02-27 08:38:56 | END   | run_api                   | Duration: 127.9035s | In-Mem: 48.27 MB | Out-Mem: 6.06 KB (STREAM TOTAL)
+2026-02-27 08:38:56 | START | run_deep_extraction       | Time: 08:38:56 | File: N/A
+2026-02-27 08:38:56 | START | run_single_page           | Time: 08:38:56 | File: 11.22 MB
+2026-02-27 08:39:57 | END   | run_single_page           | Duration: 60.9137s | In-Mem: 15.84 MB | Out-Mem: 8.22 KB (STREAM TOTAL)
+2026-02-27 08:39:58 | START | run_single_page           | Time: 08:39:58 | File: 11.22 MB
+2026-02-27 08:40:53 | END   | run_single_page           | Duration: 54.4153s | In-Mem: 15.84 MB | Out-Mem: 9.42 KB (STREAM TOTAL)
+2026-02-27 08:40:53 | END   | run_deep_extraction       | Duration: 116.9581s | In-Mem: 6.43 KB | Out-Mem: 15.48 KB (STREAM TOTAL)
+2026-02-27 08:40:53 | ================================================================================
+2026-02-27 08:40:53 | PIPELINE FINISHED | Total Session Time: 12m 10s
+2026-02-27 08:40:53 | ================================================================================

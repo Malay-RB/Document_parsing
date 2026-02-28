@@ -12,45 +12,61 @@ class PipelineLogger:
         return cls._instance
 
     def __init__(self, debug_mode=False):
-        # The heart of the Singleton: only run setup once
         if PipelineLogger._initialized:
             return
             
-        self.logger = logging.getLogger("DocumentPipeline")
-        self.logger.setLevel(logging.DEBUG) # Catch all, then filter at handler level
-        
+        # Log directory setup
         log_dir = "logs"
+        perf_dir = "logs_perf"
         os.makedirs(log_dir, exist_ok=True)
+        os.makedirs(perf_dir, exist_ok=True)
+        
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+        
+        # Formatters
+        std_fmt = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+        # Performance log is cleaner for easier parsing/regex
+        perf_fmt = logging.Formatter('%(asctime)s | %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
 
-        # 1. INFO/MAIN File (Always Active)
-        info_handler = logging.FileHandler(os.path.join(log_dir, f"info_{timestamp}.log"), encoding='utf-8')
-        info_handler.setLevel(logging.INFO)
-        info_handler.setFormatter(formatter)
-        # Filter: Only INFO, WARNING, ERROR (No DEBUG)
-        info_handler.addFilter(lambda record: record.levelno >= logging.INFO)
-        self.logger.addHandler(info_handler)
+        # --- 1. LOGIC LOGGER (DocumentPipeline) ---
+        self.logger = logging.getLogger("DocumentPipeline")
+        self.logger.setLevel(logging.DEBUG)
+        
+        # Info Handler
+        info_h = logging.FileHandler(os.path.join(log_dir, f"info_{timestamp}.log"), encoding='utf-8')
+        info_h.setLevel(logging.INFO)
+        info_h.setFormatter(std_fmt)
+        self.logger.addHandler(info_h)
 
-        # 2. DEBUG File (Flag-based)
+        # Debug Handler
         if debug_mode:
-            debug_handler = logging.FileHandler(os.path.join(log_dir, f"debug_{timestamp}.log"), encoding='utf-8')
-            debug_handler.setLevel(logging.DEBUG)
-            debug_handler.setFormatter(formatter)
-            self.logger.addHandler(debug_handler)
+            debug_h = logging.FileHandler(os.path.join(log_dir, f"debug_{timestamp}.log"), encoding='utf-8')
+            debug_h.setLevel(logging.DEBUG)
+            debug_h.setFormatter(std_fmt)
+            self.logger.addHandler(debug_h)
 
-        # 3. Console (Always INFO)
-        console_handler = logging.StreamHandler()
-        console_handler.setLevel(logging.INFO)
-        console_handler.setFormatter(formatter)
-        self.logger.addHandler(console_handler)
+        # Console Handler
+        console_h = logging.StreamHandler()
+        console_h.setLevel(logging.INFO)
+        console_h.setFormatter(std_fmt)
+        self.logger.addHandler(console_h)
+
+        # --- 2. PERFORMANCE LOGGER (PipelinePerformance) ---
+        self.perf_logger = logging.getLogger("PipelinePerformance")
+        self.perf_logger.setLevel(logging.INFO)
+        
+        perf_h = logging.FileHandler(os.path.join(perf_dir, f"performance_{timestamp}.log"), encoding='utf-8')
+        perf_h.setLevel(logging.INFO)
+        perf_h.setFormatter(perf_fmt)
+        self.perf_logger.addHandler(perf_h)
 
         PipelineLogger._initialized = True
 
 def setup_logger(debug_mode=False):
-    """Entry point for all files. Safe to call multiple times."""
+    """Global initializer to be called once in main.py"""
     factory = PipelineLogger(debug_mode=debug_mode)
     return factory.logger
 
-# Standard object for importing
+# Accessors for importing across modules
 logger = logging.getLogger("DocumentPipeline")
+perf_log = logging.getLogger("PipelinePerformance")

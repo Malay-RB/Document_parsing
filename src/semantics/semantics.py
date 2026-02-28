@@ -3,23 +3,17 @@ import unicodedata
 from config import SEMANTIC_PATTERNS
 
 class SemanticClassifier:
-
     def clean_text(self, text):
         # 1. Remove HTML tags and non-printable characters
         text = re.sub(r"<.*?>", "", text)
         text = "".join(ch for ch in text if ch.isprintable())
         
         # 2. Detect if this is a LaTeX block
-        # We keep the detection to trigger the specialized LaTeX noise cleaner
         is_latex = bool(re.search(r"\\[a-zA-Z]+|[\^{}$]", text))
 
         if is_latex:
-            # Specialized cleaning for LaTeX artifacts (trailing braces, tildes, etc.)
             text = self.clean_latex_ocr_noise(text)
         
-        # NOTE: We have removed the 'Symbol' stripping logic entirely.
-        # All math operators (+, =, <, >) will now be preserved in both Text and Math blocks.
-
         # 3. Normalize whitespace
         text = re.sub(r"\s+", " ", text)
         return text.strip()
@@ -28,7 +22,6 @@ class SemanticClassifier:
         if not text:
             return {"role": "UNKNOWN", "clean_text": ""}
 
-        # Capture the cleaned text first
         cleaned = self.clean_text(text)
 
         # 1. PAGE NUMBER DETECTION
@@ -42,49 +35,32 @@ class SemanticClassifier:
                 }
 
         # 2. MATH/EQUATION DETECTION
-        # If it passed the LaTeX check in clean_text, we label it as EQUATION
         if "\\" in cleaned or any(op in cleaned for op in ["^", "_", "{", "}"]):
             return {
                 "role": "EQUATION",
                 "clean_text": cleaned
             }
 
-        # 3. PATTERN MATCHING (Chapters, Sections, etc.)
-        # Chapter Fix
+        # 3. PATTERN MATCHING
+        # Chapter Fix for specific OCR edge cases
         if len(cleaned) <= 15 and cleaned.upper().endswith("IRCLES"):
             return {"role": "CHAPTER", "clean_text": "CIRCLES"}
 
         for role in ["CHAPTER", "SECTION", "ACTIVITY", "EXAMPLE", "FIGURE_CAPTION"]:
-            if SEMANTIC_PATTERNS[role].search(cleaned):
+            if role in SEMANTIC_PATTERNS and SEMANTIC_PATTERNS[role].search(cleaned):
                 return {"role": role, "clean_text": cleaned}
 
         # 4. DEFAULT
         return {"role": "BODY", "clean_text": cleaned}
     
     def clean_latex_ocr_noise(self, text):
-        if not text:
-            return text
-
-        # 1. Strip the redundant \mathrm wrapper often found in CBSE OCR
-        # Converts \mathrm{Area} to Area
+        if not text: return text
         text = re.sub(r'\\mathrm\{+(.*?)\}+', r'\1', text)
-
-        # 2. Remove the trailing OCR "tail" (long strings of braces or tildes at end of line)
-        # This specifically fixes the artifact you shared earlier.
         text = re.sub(r'[\s~\\{}]{5,}(?=\s*$)', '', text)
-
-        # 3. Clean up alignment and spacing noise
-        text = re.sub(r'~+', ' ', text)        # Tildes to spaces
-        text = text.replace(r'\qquad', ' ')    # LaTeX spaces to regular spaces
-        text = text.replace(r'\quad', ' ')
-        
-        # 4. Remove 'array' environment noise if it's empty or purely for layout
-        # We replace '&' with space to keep the text readable in a flat JSON
+        text = re.sub(r'~+', ' ', text)
+        text = text.replace(r'\qquad', ' ').replace(r'\quad', ' ')
         text = text.replace('&', ' ')
-        
-        # 5. Remove empty LaTeX groups left behind by noise (e.g., {{}})
         text = re.sub(r'\{+\s*\}+', '', text)
-
         return text
     
     
@@ -159,17 +135,27 @@ def bind_figures(blocks):
     
 
 def transform_structure(process_output, block_index=0):
-   
-    # Extract TOC data safely
+    """
+    Final Schema Mapper. 
+    Syncs the semantic_role from the classifier to the content_type in JSON.
+    """
     toc = process_output.get("toc_link", {})
     
-    # Determine content_type (logic can be expanded based on your needs)
-    label = process_output.get("content_label", "").lower()
-    content_type = "equation" if label == "equation" else "text"
+    # 🎯 FIX: Use the 'semantic_role' determined by the classifier
+    # If not present, fallback to the layout engine's 'content_label'
+    raw_role = process_output.get("semantic_role")
+    layout_label = process_output.get("content_label", "text").lower()
     
-    # Construct the desired output
+    # Map roles to a clean content_type
+    content_type = raw_role.lower() if raw_role else layout_label
+
+    # Construct the ID with actual page numbers if available
+    unit_id = toc.get("unit_id") or "0"
+    chap_id = toc.get("chapter_id") or "0"
+    pdf_p = process_output.get("pdf_page") or "0"
+
     transformed = {
-        "id": f"u{toc.get('unit_id') or 'None'}_c{toc.get('chapter_id') or 'None'}_pNone_b{block_index}",
+        "id": f"u{unit_id}_c{chap_id}_p{pdf_p}_b{block_index}",
         "sequence_id": block_index,
         "unit_id": toc.get("unit_id"),
         "unit_name": toc.get("unit_name"),
@@ -178,7 +164,7 @@ def transform_structure(process_output, block_index=0):
         "page_number": process_output.get("printed_page"),
         "pdf_page": process_output.get("pdf_page"),
         "block_index": block_index,
-        "content_type": content_type,
+        "content_type": content_type, # This will now be 'equation', 'chapter', 'body', etc.
         "text": process_output.get("text", "")
     }
     

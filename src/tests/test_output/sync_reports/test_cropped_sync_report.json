@@ -1,0 +1,11 @@
+{
+    "pdf_filename": "test_cropped",
+    "toc_pages": [
+        3,
+        4,
+        5,
+        6
+    ],
+    "content_start_page": 7,
+    "anchor_used": "real numbers"
+}

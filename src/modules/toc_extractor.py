@@ -10,36 +10,40 @@ from PIL import ImageOps, ImageFilter, ImageDraw
 # Ensure project root is in path for imports
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from surya.settings import settings
-from surya.layout import LayoutPredictor
-from surya.detection import DetectionPredictor
-from surya.recognition import RecognitionPredictor
-from surya.foundation import FoundationPredictor
-
 from loaders.model_loader import ModelLoader
 from loaders.pdfium_loader import PDFLoader
 from processing.logger import logger, setup_logger
 from processing.performance_track import track_telemetry
+from config import ProjectConfig
 
 class TOCProcessorAPI:
-    def __init__(self, ocr_engine=None):
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-        os.environ["SURYA_DEVICE"] = device
-        os.environ["TORCH_DEVICE"] = device
-        
-        # INFO: Loading models is a significant startup event
-        logger.info(f"🛠️  [TOC_INIT] Initializing Models on {device.upper()}...")
-        
-        models = ModelLoader().load()
-        self.foundation = FoundationPredictor(checkpoint=settings.LAYOUT_MODEL_CHECKPOINT)
-        self.layout_predictor = LayoutPredictor(self.foundation)
-        self.detection_predictor = DetectionPredictor()
-        self.recognition_predictor = RecognitionPredictor(self.foundation)
-        self.easyocr_reader = models.easyocr_reader
+    def __init__(self, ocr_engine=None, models=None):
+        """
+        Supports Brain Injection: 
+        Uses pre-loaded models if provided, otherwise loads fresh ones.
+        """
+        # 1. Resolve Brains (Predictors)
+        if models:
+            self.layout_predictor = models.layout_predictor
+            self.detection_predictor = models.detection_predictor
+            self.recognition_predictor = models.recognition_predictor
+            self.easyocr_reader = models.easyocr_reader
+        elif ocr_engine:
+            self.layout_predictor = getattr(ocr_engine, 'layout_predictor', None)
+            self.detection_predictor = ocr_engine.detection_predictor
+            self.recognition_predictor = ocr_engine.recognition_predictor
+            self.easyocr_reader = ocr_engine.easyocr_reader
+        else:
+            logger.info("🛠️  [TOC_INIT] No models provided. Performing fresh load...")
+            m = ModelLoader().load()
+            self.layout_predictor = m.layout_predictor
+            self.detection_predictor = m.detection_predictor
+            self.recognition_predictor = m.recognition_predictor
+            self.easyocr_reader = m.easyocr_reader
         
         self.ocr_engine = ocr_engine
 
-        # Configuration
+        # 2. Configuration & Regex
         self.y_threshold = 25 
         self.float_check = re.compile(r"^\d+\.\d+")
         self.chapter_id_pattern = re.compile(r"^(\d+)\.?\s+")
@@ -48,12 +52,11 @@ class TOCProcessorAPI:
         self.max_chapter_jump = 5
 
     def _spatial_grouping(self, raw_elements):
-        """Groups raw OCR boxes into logical horizontal lines."""
+        """Groups raw OCR boxes into logical horizontal lines based on Y-coordinates."""
         if not raw_elements:
             return []
 
-        # DEBUG: Low-level grouping logic
-        logger.debug(f"🧬 [Spatial] Grouping {len(raw_elements)} raw elements into lines...")
+        logger.debug(f"🧬 [Spatial] Grouping {len(raw_elements)} elements into lines...")
         
         sorted_by_y = sorted(raw_elements, key=lambda l: (l.bbox[1], l.bbox[0]))
         page_rows = []
@@ -82,15 +85,15 @@ class TOCProcessorAPI:
 
     @track_telemetry
     def run_api(self, toc_images, debug=False, model="surya"):
-        # INFO: Process start
-        logger.info(f"📖 [TOC_PROCESS] Extracting structure using {model.upper()}...")
+        """Extracts text from images and structures into chapter data."""
+        logger.info(f"📖 [TOC_PROCESS] Extraction model: {model.upper()}")
         raw_output = []
         debug_frames = []
         
         for idx, img in enumerate(toc_images):
-            # INFO: Tracking progress through the TOC images
             logger.info(f"📄 Processing TOC Page {idx+1}/{len(toc_images)}...")
             
+            # Pad and Enhance for better OCR accuracy
             img_padded = ImageOps.expand(img, border=(50, 0, 300, 0), fill='white')
             img_padded = ImageOps.autocontrast(img_padded)
             img_padded = img_padded.filter(ImageFilter.UnsharpMask(radius=2, percent=150, threshold=3))
@@ -100,20 +103,17 @@ class TOCProcessorAPI:
             if model == "surya":
                 line_predictions = self.recognition_predictor([img_padded], det_predictor=self.detection_predictor)[0]
                 elements_to_group = line_predictions.text_lines
-                logger.debug(f"✅ Surya found {len(elements_to_group)} elements.")
-
             elif model == "easy":
                 results = self.easyocr_reader.readtext(np.array(img_padded))
                 for res in results:
                     coords, text = res[0], res[1]
-                    x_coords = [p[0] for p in coords]
-                    y_coords = [p[1] for p in coords]
                     class MockLine: pass
                     m = MockLine()
-                    m.bbox = [min(x_coords), min(y_coords), max(x_coords), max(y_coords)]
+                    # Calculate proper bounding box from 4-point coordinates
+                    m.bbox = [min([p[0] for p in coords]), min([p[1] for p in coords]), 
+                              max([p[0] for p in coords]), max([p[1] for p in coords])]
                     m.text = text
                     elements_to_group.append(m)
-                logger.debug(f"✅ EasyOCR found {len(elements_to_group)} elements.")
 
             if debug:
                 draw_img = img.copy()
@@ -129,8 +129,8 @@ class TOCProcessorAPI:
         return structured_results, debug_frames
 
     def transform_logic(self, raw_pages):
-        # INFO: High-level transformation step
-        logger.info(f"🧠 [TOC_TRANSFORM] Converting lines to structured JSON...")
+        """Converts raw lines into a structured JSON hierarchy of Units and Chapters."""
+        logger.info(f"🧠 [TOC_TRANSFORM] Applying hierarchy and merging logic...")
         structured_data = []
         active_unit_id, active_unit_name = None, None
         last_chapter_id = 0
@@ -139,20 +139,16 @@ class TOCProcessorAPI:
             merged_lines = []
             lines = page.get("lines", [])
             
-            # Step 1: Merging page numbers
+            # Step 1: Spatial Merge - Attach floating page numbers to text lines
             for line in lines:
                 stripped = line.strip()
                 is_num = re.fullmatch(r'\d{1,4}(\s*(?:-|–|—|to)\s*\d{1,4})?', stripped, re.IGNORECASE)
+                if is_num and merged_lines and re.match(r'^\d+\.?\s+', merged_lines[-1].strip()):
+                    merged_lines[-1] = merged_lines[-1].strip() + " " + stripped
+                else:
+                    merged_lines.append(line)
 
-                if is_num and merged_lines:
-                    if re.match(r'^\d+\.?\s+', merged_lines[-1].strip()):
-                        merged_lines[-1] = merged_lines[-1].strip() + " " + stripped
-                        # DEBUG: Granular merging detail
-                        logger.debug(f"🔗 Merged floating page number: {stripped}")
-                    else: merged_lines.append(line)
-                else: merged_lines.append(line)
-
-            # Step 2: Extraction logic
+            # Step 2: Extraction logic - Pattern matching for Chapter IDs and Page Numbers
             for line in merged_lines:
                 cleaned = self.clean_text(line)
                 if not cleaned or len(cleaned) < self.min_line_length or self.float_check.match(cleaned):
@@ -177,7 +173,7 @@ class TOCProcessorAPI:
                 chapter_name = self.sanitize_title(raw_name.strip(" .-_"))
                 if not chapter_name: continue
 
-                # Logic for Unit Headers
+                # Logic for detecting Unit Headers vs Chapter Titles
                 unit_check = re.search(r"^([A-Za-z\s]+?)\s+(\d+)\.?\s+(.+)", chapter_name)
                 if unit_check:
                     active_unit_id, active_unit_name = chapter_id_candidate, self.sanitize_title(unit_check.group(1).strip())
@@ -185,7 +181,6 @@ class TOCProcessorAPI:
                 else:
                     chapter_id, final_name = chapter_id_candidate, chapter_name
 
-                # INFO: We want to see the identified chapters in the main log
                 logger.info(f"⭐ Identified: Ch {chapter_id} - {final_name} [Starts Page: {start_p}]")
 
                 structured_data.append({
@@ -198,7 +193,7 @@ class TOCProcessorAPI:
                 })
                 last_chapter_id = chapter_id
 
-        # Step 3: Fill end pages
+        # Step 3: Predictive filling for end pages based on subsequent chapter start
         for i in range(len(structured_data) - 1):
             if structured_data[i]["end_page"] is None:
                 next_start = structured_data[i + 1]["start_page"]
@@ -206,7 +201,6 @@ class TOCProcessorAPI:
         
         return structured_data
 
-    # Helper Cleaners (remain unchanged logic-wise)
     def clean_text(self, text):
         text = re.sub(r'<[^>]*>', '', text)
         text = re.sub(r'\.{2,}', ' ', text)
@@ -218,33 +212,43 @@ class TOCProcessorAPI:
         text = re.sub(r'\s{2,}', ' ', text)
         return text.strip()
 
-# Standalone Execution Block
-def run_standalone_toc(pdf_filename, page_list=None):
-    setup_logger(debug_mode=True) # Standalone uses full detail
-    pdf_path = f"input/{pdf_filename}.pdf"
+# --- STANDALONE EXECUTION ---
+def run_standalone_toc(pdf_name, page_list=None):
+    """
+    Direct module execution using ProjectConfig for path resolution.
+    Outputs to src/modules/output/toc_json.
+    """
+    cfg = ProjectConfig()
+    setup_logger(debug_mode=cfg.DEBUG_MODE)
+    
+    # Auto-resolve paths: Will use Standalone (Input: root/input, Output: modules/output)
+    in_path, out_path = cfg.get_active_paths()
+    pdf_path = os.path.join(in_path, f"{pdf_name}.pdf")
     
     if not os.path.exists(pdf_path):
         logger.error(f"❌ Error: {pdf_path} not found.")
         return
 
-    loader = PDFLoader(scale=3.5)
+    loader = PDFLoader(scale=cfg.PDF_SCALE)
     loader.open(pdf_path)
     page_list = page_list or list(range(1, loader.get_total_pages() + 1))
     
-    logger.info(f"📂 Processing TOC for: {pdf_filename} | Pages: {page_list}")
+    logger.info(f"📂 Standalone TOC Processing: {pdf_name} | Pages: {page_list}")
 
     images = [loader.load_page(p) for p in page_list]
     api = TOCProcessorAPI()
-    results, _ = api.run_api(images, model="surya")
+    results, _ = api.run_api(images, model=cfg.EXTRACTION_MODEL)
 
     # Exporting
-    out_file = f"modules/output/toc/{pdf_filename}_toc.json"
-    os.makedirs(os.path.dirname(out_file), exist_ok=True)
+    toc_out_dir = os.path.join(out_path, "toc_json")
+    os.makedirs(toc_out_dir, exist_ok=True)
+    out_file = os.path.join(toc_out_dir, f"{pdf_name}_toc.json")
+    
     with open(out_file, "w", encoding="utf-8") as f:
         json.dump(results, f, indent=4, ensure_ascii=False)
 
     loader.close()
-    logger.info(f"✅ Extraction Successful: {len(results)} chapters saved to {out_file}")
+    logger.info(f"✅ Extraction Successful: Saved to {out_file}")
 
 if __name__ == "__main__":
-    run_standalone_toc("MH_5p", page_list=None)
+    run_standalone_toc("ncert10M_8p")
