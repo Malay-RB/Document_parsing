@@ -9,7 +9,8 @@ def run_scout_phase(image, boxes, ocr_engine, model, page_no, width, height):
     # DEBUG: The model choice is a technical detail
     logger.debug(f"🔍 [Scout] Using '{model}' engine for Page {page_no}")
     
-    if not boxes: return False, None
+    if not boxes: 
+        return False, None
     
     # We only scout the very first box (top of page)
     first_box = boxes[0]
@@ -69,7 +70,7 @@ def extract_text_block(image, box, safe_coord, models, ocr_engine, ocr_type):
         return "[FIGURE_OR_IMAGE_BLOCK]"
 
     if group == "TABLE":
-        logger.info(f"📊 Table Block Detected: Skipping standard OCR.")
+        logger.info("📊 Table Block Detected: Skipping standard OCR.")
         return "[TABLE_BLOCK]"
 
     # 2. OCR PREPARATION
@@ -77,7 +78,7 @@ def extract_text_block(image, box, safe_coord, models, ocr_engine, ocr_type):
 
     # 3. MATH ROUTING (DEBUG: Technical Detail)
     if group == "MATH":
-        logger.debug(f"📐 Math Block detected. Routing to RapidLatex...")
+        logger.debug("📐 Math Block detected. Routing to RapidLatex...")
         res = models.rapid_latex_engine(np.array(crop))
         return res[0] if isinstance(res, tuple) else str(res)
 

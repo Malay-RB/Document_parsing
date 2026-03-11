@@ -1,5 +1,4 @@
 import re
-import unicodedata
 from config import SEMANTIC_PATTERNS
 
 class SemanticClassifier:
@@ -54,7 +53,8 @@ class SemanticClassifier:
         return {"role": "BODY", "clean_text": cleaned}
     
     def clean_latex_ocr_noise(self, text):
-        if not text: return text
+        if not text: 
+            return text
         text = re.sub(r'\\mathrm\{+(.*?)\}+', r'\1', text)
         text = re.sub(r'[\s~\\{}]{5,}(?=\s*$)', '', text)
         text = re.sub(r'~+', ' ', text)

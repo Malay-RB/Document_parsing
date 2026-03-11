@@ -1,4 +1,3 @@
-from PIL import Image
 import json
 from processing.logger import logger
 import os
@@ -29,7 +28,8 @@ def finalize_output(state, temp_path, final_path, debug_path, exporter, cfg, pen
         final_data = []
         if os.path.exists(temp_path):
             with open(temp_path, "r", encoding="utf-8") as f:
-                for line in f: final_data.append(json.loads(line))
+                for line in f: 
+                    final_data.append(json.loads(line))
             save_json(final_data, final_path)
             os.remove(temp_path)
         if cfg["DEBUG_IMAGE"] and (state["debug_images"] or state["scout_images"]):

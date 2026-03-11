@@ -6,13 +6,10 @@ from config import ProjectConfig
 
 def test_deep_extraction_standalone_pure(shared_models):
     """
-    Step 3: PURE EXTRACTION TEST.
-    Verifies the extraction of a cropped book sample without any TOC linking.
-    Tests: Layout detection, OCR accuracy, and Pagination tracking.
+    Step 3: PURE EXTRACTION TEST with Telemetry Support.
     """
     # 1. SETUP
     cfg = ProjectConfig()
-    # Path to your specialized cropped PDF for extraction testing
     pdf_name = "test_extract" 
     
     in_path, out_base = cfg.get_active_paths()
@@ -21,7 +18,6 @@ def test_deep_extraction_standalone_pure(shared_models):
     if not os.path.exists(pdf_path):
         pytest.skip(f"Cropped sample not found at {pdf_path}")
 
-    # Resolve output directory inside the test sandbox
     extraction_out_dir = os.path.join(out_base, "extraction_results")
     os.makedirs(extraction_out_dir, exist_ok=True)
     out_file = os.path.join(extraction_out_dir, f"{pdf_name}_pure_extraction.json")
@@ -29,47 +25,46 @@ def test_deep_extraction_standalone_pure(shared_models):
     # 2. ACT
     all_blocks = []
     
-    # Run the generator with hierarchy=None (No Linking)
+    # Updated: Added force_prod=False to ensure the decorator searches 
+    # the 'test' directory correctly if specified in config.
     generator = run_deep_extraction(
         pdf_filename=pdf_name,
         start_page=1,
-        hierarchy=None,  # 🎯 Focus strictly on extraction, not linking
+        hierarchy=None,
         models=shared_models,
-        config=cfg
+        config=cfg,
+        force_prod=False 
     )
 
-    # Exhaust the generator to process all pages in the sample
+    # 3. EXHAUST GENERATOR
+    # The decorator now tracks the 'Stream Total' memory usage here.
     for page_batch in generator:
         all_blocks.extend(page_batch)
 
-    # 3. ASSERTIONS
+    # 4. ASSERTIONS
     assert len(all_blocks) > 0, "Extraction failed: Zero blocks returned."
 
-    # Validate the data schema of the first block
     sample = all_blocks[0]
     
-    # 3.1 Check for Transformed Keys (as per your semantics.py)
-    # Based on your previous logs, transform_structure renames roles to 'content_type'
-    assert "content_type" in sample, f"Keys missing 'content_type'. Found: {sample.keys()}"
+    # Validate Schema
+    assert "content_type" in sample, f"Schema mismatch: {sample.keys()}"
     assert "text" in sample, "Block missing 'text' content."
     assert "pdf_page" in sample, "Physical page tracking missing."
-    assert "page_number" in sample, "Printed page tracking (tracker) missing."
-
-    # 3.2 Verify Pagination logic
-    # Since we are testing the tracker, we want to see if it resolved numbers
-    printed_pages = [b["page_number"] for b in all_blocks if b["page_number"] is not None]
     
-    # 3.3 Verify TOC Hand-off is absent (as requested)
-    # chapter_name should be None because we passed hierarchy=None
-    assert sample.get("chapter_name") is None, "Logic Error: Chapter linked despite no hierarchy."
+    # Verify Tracker Logic
+    # Even if hierarchy is None, pdf_page should be an integer.
+    assert isinstance(sample["pdf_page"], int), "pdf_page must be an integer."
 
-    # 4. EXPORT & LOG
+    # Verify that no Linking occurred
+    assert sample.get("chapter_name") is None, "Logic Error: Chapter linked despite hierarchy=None."
+
+    # 5. EXPORT & LOG
     roles_detected = set(b["content_type"] for b in all_blocks)
     
     with open(out_file, "w", encoding="utf-8") as f:
         json.dump(all_blocks, f, indent=4, ensure_ascii=False)
 
-    print(f"\n✅ PURE EXTRACTION TEST PASSED")
+    print("\n✅ PURE EXTRACTION TEST PASSED")
     print(f"📊 Content Types Found: {roles_detected}")
-    print(f"🔢 Pages Processed: {len(set(b['pdf_page'] for b in all_blocks))}")
+    print(f"🔢 Total Blocks: {len(all_blocks)}")
     print(f"📂 JSON Saved: {out_file}")

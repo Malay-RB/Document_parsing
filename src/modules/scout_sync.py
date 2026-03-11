@@ -2,13 +2,12 @@ import os
 import sys
 import gc
 import json
-import PIL.Image as Image
 
 # Ensure project root is in path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from loaders.model_loader import ModelLoader
-from loaders.pdfium_loader import PDFLoader
+from loaders.pdf_loader import PDFLoader
 from engine.layout_engine import LayoutEngine
 from engine.ocr_engine import OCREngine
 from modules.toc_extractor import TOCProcessorAPI
@@ -24,6 +23,8 @@ def run_scout_sync(pdf_name, input_path=None, output_path=None, models=None, con
     """
     Optimized Scout & Sync module with Auto-Environment Detection.
     """
+    debug_mode = ProjectConfig.DEBUG_MODE
+
     # 1. CONFIGURATION RESOLUTION
     cfg = config if config else ProjectConfig()
     
@@ -104,8 +105,9 @@ def run_scout_sync(pdf_name, input_path=None, output_path=None, models=None, con
                     state["scout_images"].append(draw_layout(image, boxes))
                     
                     # PROBE: Identify Anchor text (e.g., Chapter 1 title)
-                    probe_results, debug_frames = toc_api.run_api([image], debug=True, model=extraction_model)
-                    if debug_frames: state["debug_images"].extend(debug_frames)
+                    probe_results, debug_frames = toc_api.run_api([image], debug=debug_mode, model=extraction_model)
+                    if debug_frames: 
+                        state["debug_images"].extend(debug_frames)
 
                     if probe_results:
                         state["target_anchor"] = probe_results[0]["chapter_name"].lower()
@@ -134,25 +136,30 @@ def run_scout_sync(pdf_name, input_path=None, output_path=None, models=None, con
                     state["toc_buffer"].append(page_no)
                     logger.debug(f"⏳ Page {page_no}: Anchor not yet found.")
 
-            if page_no % 3 == 0: gc.collect()
+            if page_no % 3 == 0: 
+                gc.collect()
 
         # 3. FINAL SUMMARY
+        tracking_report = {
+            "pdf_filename": pdf_name,
+            "toc_pages": state["toc_buffer"],
+            "content_start_page": page_no if state["sync_completed"] else None,
+            "anchor_used": state["target_anchor"]
+        }
+
         if state["sync_completed"]:
-            tracking_report = {
-                "pdf_filename": pdf_name,
-                "toc_pages": state["toc_buffer"],
-                "content_start_page": page_no,
-                "anchor_used": state["target_anchor"]
-            }
-            
             report_path = os.path.join(report_dir, f"{pdf_name}_sync_report.json")
             with open(report_path, "w") as f:
                 json.dump(tracking_report, f, indent=4)
-            
             logger.info(f"📊 SYNC REPORT SAVED: {report_path}")
             return tracking_report
 
-        # Save visuals if sync failed
+        # If sync failed but we found a TOC, return partial results
+        if state["toc_buffer"]:
+            logger.warning(f"⚠️ Sync failed but TOC found on pages: {state['toc_buffer']}")
+            return tracking_report
+
+        # Save visuals only if we have absolutely nothing
         all_visuals = state["scout_images"] + state["debug_images"]
         if all_visuals:
             PDFDebugExporter().save(all_visuals, debug_pdf_path)

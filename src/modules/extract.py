@@ -2,13 +2,12 @@ import os
 import sys
 import json
 import gc
-import PIL.Image as Image
 
 # Ensure project root is in path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from loaders.model_loader import ModelLoader
-from loaders.pdfium_loader import PDFLoader
+from loaders.pdf_loader import PDFLoader
 from engine.layout_engine import LayoutEngine
 from engine.ocr_engine import OCREngine
 from processing.pipeline_utils import extract_text_block
@@ -97,12 +96,19 @@ def run_deep_extraction(pdf_filename, input_path=None, output_path=None, start_p
     Phase 3: Iterative Deep Content Extraction.
     Uses Auto-Environment Detection for paths.
     """
+
+    debug_frames = []
+
     cfg = config if config else ProjectConfig()
     
     # Auto-detect paths (Pytest vs Standalone vs Main)
-    auto_in, auto_out = cfg.get_active_paths(force_prod=force_prod)
+    auto_in = cfg.get_active_paths(force_prod=force_prod)
     final_in = input_path if input_path else auto_in
-    final_out = output_path if output_path else auto_out
+
+    # FIX: Ensure we take the first element if it's a tuple, and force string
+    final_in = input_path if input_path else auto_in
+    if isinstance(final_in, tuple):
+        final_in = final_in[0]
     
     pdf_path = os.path.join(final_in, f"{pdf_filename}.pdf")
     strategy = pg_no_strategy if pg_no_strategy else cfg.PG_NO_STRATEGY
@@ -141,10 +147,11 @@ def run_deep_extraction(pdf_filename, input_path=None, output_path=None, start_p
             logger.info(f"📄 Processing Physical Page {page_no}/{total_pages}")
             image = pdf_loader.load_page(page_no)
             
-            current_page_blocks, is_ready = run_single_page(
+            current_page_blocks, is_ready, debug_img = run_single_page(
                 image, page_no, models, layout_engine, ocr_engine, 
                 classifier, strategy, tracker, hierarchy
             )
+            debug_frames.append(debug_img)
 
             if is_ready:
                 if not offset_locked:

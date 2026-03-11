@@ -27,8 +27,18 @@ class ProjectConfig:
     EXTRACTION_MODEL = "easy"
     SCOUT_LIMIT = 15
     PDF_SCALE = 3.5
-    PG_NO_STRATEGY = "HEADER"
+    PG_NO_STRATEGY = "FOOTER"
     DEBUG_MODE = True
+
+    # ------Drive Upload------
+    ENABLE_DRIVE_SYNC = True
+    DRIVE_AUTH_MODE = "service" # or "token"
+    CATEGORY = "Education"
+    BOARD = "CBSE"
+    GRADE = "10"
+    SERVICE_ACCOUNT_PATH = "credentials/gv4ex001-f1a212036ab2.json"
+    TOKEN_PATH = "credentials/token.json"
+    DRIVE_FOLDER_ID = "10V8JwbALeyy6qsd5ORlay55gK5a7tPUy"
 
     def __init__(self):
         # Automatically detect if we are running via Pytest

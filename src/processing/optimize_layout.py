@@ -2,7 +2,8 @@ from PIL import ImageDraw, ImageFont
 
 
 def get_safe_padding(boxes, image_width, image_height, tolerance=60): # Increased tolerance
-    if not boxes: return []
+    if not boxes: 
+        return []
 
     initial_indices = sorted(range(len(boxes)), key=lambda k: boxes[k].bbox[1])
     
@@ -47,7 +48,7 @@ def draw_layout(image, boxes):
     draw = ImageDraw.Draw(debug_img)
     try:
         font = ImageFont.truetype("arial.ttf", 18)
-    except:
+    except Exception:
         font = ImageFont.load_default()
 
     for i, box in enumerate(boxes):
@@ -63,7 +64,8 @@ def draw_layout(image, boxes):
 
 def filter_overlapping_boxes(boxes, threshold=0.8):
     """Keep only the most relevant boxes when multiple boxes overlap."""
-    if not boxes: return []
+    if not boxes: 
+        return []
     
     # Sort boxes by area (descending) so we keep larger containers if needed
     # or sort by confidence if your model provides it.

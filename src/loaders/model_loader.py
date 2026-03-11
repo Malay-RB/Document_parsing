@@ -8,7 +8,6 @@ from surya.detection import DetectionPredictor
 from surya.recognition import RecognitionPredictor
 from surya.settings import settings
 
-from super_image import EdsrModel
 from rapidocr_onnxruntime import RapidOCR
 from rapid_latex_ocr import LaTeXOCR
 
@@ -42,15 +41,6 @@ class ModelLoader:
         print(f"\n{'='*40}")
         print(f"🚀 LOADING MODELS IN {device.upper()} MODE")
         print(f"{'='*40}")
-
-        # --- SuperImage ---
-        print("📥 Loading SuperImage (EDSR)...")
-        self.sr_model = EdsrModel.from_pretrained(
-            "eugenesiow/edsr-base",
-            scale=2
-        ).eval()
-        if device == "cuda":
-            self.sr_model = self.sr_model.to("cuda")
 
         # --- Surya ---
         print("📥 Loading Surya OCR Predictors...")

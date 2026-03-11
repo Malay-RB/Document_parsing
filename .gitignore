@@ -6,6 +6,7 @@ src/input
 src/logs
 src/logs_perf
 src/tests/test_output
+src/credentials
 **/__pycache__/
 *.py[cod]
 .ruff_cache/

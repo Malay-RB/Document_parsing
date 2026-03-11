@@ -48,7 +48,7 @@ def _detect_from_header(image, boxes, safe_coords, ocr_engine, classifier, ocr_t
 
 def _detect_from_footer(image, boxes, safe_coords, ocr_engine, classifier, ocr_type, height):
     # DEBUG: Diagnostic info for footers
-    logger.debug(f"🔍 Checking Footer: Targeting last 2 blocks.")
+    logger.debug("🔍 Checking Footer: Targeting last 2 blocks.")
     
     total_boxes = len(boxes)
     start_idx = max(0, total_boxes - 2)
@@ -111,10 +111,12 @@ def find_printed_page_no(image, boxes, safe_coords, ocr_engine, classifier, ocr_
         return _detect_from_corners(image, boxes, safe_coords, ocr_engine, classifier, ocr_type, height)
     elif strategy == "AUTO":
         page_no = _detect_from_header(image, boxes, safe_coords, ocr_engine, classifier, ocr_type, height)
-        if page_no is not None: return page_no
+        if page_no is not None: 
+            return page_no
 
         page_no = _detect_from_footer(image, boxes, safe_coords, ocr_engine, classifier, ocr_type, height)
-        if page_no is not None: return page_no
+        if page_no is not None: 
+            return page_no
 
         return _detect_from_corners(image, boxes, safe_coords, ocr_engine, classifier, ocr_type, height)
 
