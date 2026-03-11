@@ -3,7 +3,7 @@ import os
 import json
 import sys
 import numpy as np
-from PIL import ImageOps, ImageFilter, ImageDraw
+from PIL import Image , ImageOps, ImageFilter, ImageDraw
 
 # Ensure project root is in path for imports
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -49,7 +49,7 @@ class TOCProcessorAPI:
         self.float_check = re.compile(r"^\d+\.\d+\s*$")
 
         # chapter 
-        self.chapter_id_pattern = re.compile(r"^(\d+)\.\s+")
+        self.chapter_id_pattern = re.compile(r"^(\d+)\.?\s+")
 
         # subtopic  
         self.subtopic_pattern = re.compile(r"^(\d+\.\d+)\s+([A-Za-z].+)")
@@ -116,15 +116,26 @@ class TOCProcessorAPI:
                 elements_to_group = line_predictions.text_lines
 
             elif model == "easy":
-                results = self.easyocr_reader.readtext(np.array(img_padded))
+                # ✅ Upscale before OCR to preserve small dots/punctuation
+                scale_factor = 2.0
+                new_size = (int(img_padded.width * scale_factor), int(img_padded.height * scale_factor))
+                img_upscaled = img_padded.resize(new_size, Image.LANCZOS)
+                
+                results = self.easyocr_reader.readtext(
+                    np.array(img_upscaled),
+                    paragraph=False,
+                    detail=1,
+                    low_text=0.3,
+                    text_threshold=0.6,
+                    link_threshold=0.3,
+                )
                 for res in results:
                     coords, text = res[0], res[1]
                     class MockLine:
                         pass
                     m = MockLine()
-                    # Calculate proper bounding box from 4-point coordinates
                     m.bbox = [min([p[0] for p in coords]), min([p[1] for p in coords]),
-                              max([p[0] for p in coords]), max([p[1] for p in coords])]
+                            max([p[0] for p in coords]), max([p[1] for p in coords])]
                     m.text = text
                     elements_to_group.append(m)
 
@@ -243,6 +254,13 @@ class TOCProcessorAPI:
 
                 # Logic for detecting Unit Headers vs Chapter Titles
                 unit_check = re.search(r"^([A-Za-z\s]+?)\s+(\d+)\.?\s+(.+)", chapter_name)
+
+                UNIT_KEYWORDS = {"unit", "part", "section"}
+                if unit_check:
+                    leading_word = unit_check.group(1).strip().lower()
+                    if not any(kw in leading_word for kw in UNIT_KEYWORDS):
+                        unit_check = None
+
 
                 if unit_check:
                     active_unit_id = chapter_id_candidate

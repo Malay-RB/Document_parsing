@@ -326,7 +326,7 @@ def run_pipeline(pdf_name, config: ProjectConfig):
 
 def main():
     cfg = ProjectConfig()
-    run_pipeline(pdf_name="ncert10M_8p", config=cfg)
+    run_pipeline(pdf_name="ncert121ee", config=cfg)
 
 if __name__ == "__main__":
     main() 
