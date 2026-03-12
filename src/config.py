@@ -31,7 +31,7 @@ class ProjectConfig:
     DEBUG_MODE = True
 
     # ------Drive Upload------
-    ENABLE_DRIVE_SYNC = True
+    ENABLE_DRIVE_SYNC = False
     DRIVE_AUTH_MODE = "service" # or "token"
     CATEGORY = "Education"
     BOARD = "CBSE"

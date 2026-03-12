@@ -17,6 +17,8 @@ from exporters.exporter import PDFDebugExporter
 from processing.logger import logger
 from processing.performance_track import track_telemetry
 from config import ProjectConfig
+from processing.logger import setup_logger
+from processing.optimize_layout import draw_layout
 
 @track_telemetry
 def run_scout_sync(pdf_name, input_path=None, output_path=None, models=None, config=None, force_prod=False):
@@ -101,7 +103,6 @@ def run_scout_sync(pdf_name, input_path=None, output_path=None, models=None, con
                     logger.info(f"🎯 SCOUT TRIGGERED! '{trigger_text}' on Page {page_no}")
                     state["is_discovering_toc"] = True
                     
-                    from processing.optimize_layout import draw_layout
                     state["scout_images"].append(draw_layout(image, boxes))
                     
                     # PROBE: Identify Anchor text (e.g., Chapter 1 title)
@@ -128,7 +129,6 @@ def run_scout_sync(pdf_name, input_path=None, output_path=None, models=None, con
                 if run_sync_phase(image, boxes, ocr_engine, extraction_model, state["target_anchor"], height, width):
                     logger.info(f"✅ SYNC SUCCESSFUL! Match found on Page: {page_no}")
                     
-                    from processing.optimize_layout import draw_layout
                     state["scout_images"].append(draw_layout(image, boxes))
                     state["sync_completed"] = True
                     break 
@@ -173,7 +173,6 @@ def run_scout_sync(pdf_name, input_path=None, output_path=None, models=None, con
         pdf_loader.close()
 
 if __name__ == "__main__":
-    from processing.logger import setup_logger
     setup_logger(debug_mode=True)
     # Standalone mode: cfg will automatically pick Prod Input and Module Output
     run_scout_sync("ncert10M_8p")

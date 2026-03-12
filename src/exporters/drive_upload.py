@@ -30,33 +30,56 @@ def get_drive_service(config: ProjectConfig):
         return None
 
 def find_or_create_folder(service, name, parent_id):
-    """ Checks for folder existence under parent_id; creates if missing. """
-    query = f"name='{name}' and mimeType='application/vnd.google-apps.folder' and trashed=false and '{parent_id}' in parents"
+    """ 
+    Strictly searches for a folder name INSIDE a specific parent_id.
+    If it exists, returns the ID. If not, creates it.
+    """
+    # Escaping name for safety
+    clean_name = name.replace("'", "\\'")
+    query = (
+        f"name='{clean_name}' and "
+        f"mimeType='application/vnd.google-apps.folder' and "
+        f"'{parent_id}' in parents and "
+        f"trashed=false"
+    )
     
     try:
         response = service.files().list(
             q=query, 
-            fields="files(id)",
+            fields="files(id, name)",
             supportsAllDrives=True, 
             includeItemsFromAllDrives=True
         ).execute()
         
         files = response.get('files', [])
+        
         if files:
+            # If folder is found, use the existing one
+            logger.debug(f"📁 Found existing folder: {name} ({files[0]['id']})")
             return files[0]['id']
         
-        meta = {'name': name, 'mimeType': 'application/vnd.google-apps.folder', 'parents': [parent_id]}
-        folder = service.files().create(body=meta, fields='id', supportsAllDrives=True).execute()
+        # If not found, create it under the provided parent_id
+        meta = {
+            'name': name, 
+            'mimeType': 'application/vnd.google-apps.folder', 
+            'parents': [parent_id]
+        }
+        folder = service.files().create(
+            body=meta, 
+            fields='id', 
+            supportsAllDrives=True
+        ).execute()
+        
+        logger.info(f"📂 Created new folder: {name}")
         return folder.get('id')
+        
     except Exception as e:
-        logger.error(f"❌ Folder Error ({name}): {str(e)}")
+        logger.error(f"❌ Error in find_or_create for '{name}': {str(e)}")
         raise
 
-def upload_to_drive(local_path, pdf_name, config: ProjectConfig, mode="object"):
+def upload_to_drive(local_path, pdf_name, config: ProjectConfig, mode="object", existing_run_id=None):
     """
-    Unified sync module for both Final JSON (object) and Debug PDF (debug).
-    mode: "object" -> saves to 'Object' folder
-    mode: "debug"  -> saves to 'Debug_data' folder
+    If existing_run_id is provided, files will be grouped in the same folder.
     """
     if not os.path.exists(local_path):
         logger.error(f"❌ Local file not found: {local_path}")
@@ -65,26 +88,30 @@ def upload_to_drive(local_path, pdf_name, config: ProjectConfig, mode="object"):
     service = get_drive_service(config)
     if not service: return None
 
-    # 1. Determine Hierarchy Metadata
     category = config.CATEGORY
     book_folder = f"{pdf_name}_{config.BOARD}_{config.GRADE}" if category.lower() == "education" else pdf_name
-    unique_run = f"Run_{time.strftime('%Y%m%d_%H%M%S')}"
     
-    # Branching logic for top-level folder
+    # Branching logic
     top_folder_name = "Object" if mode == "object" else "Debug_data"
     mime_type = 'application/json' if local_path.endswith('.json') else 'application/pdf'
 
     try:
-        # Use DRIVE_FOLDER_ID directly as the root anchor
         anchor_id = config.DRIVE_FOLDER_ID
         
-        # 2. Sequential hierarchy build
+        # 1. Build/Find Hierarchy
         branch_id = find_or_create_folder(service, top_folder_name, anchor_id)
         cat_id    = find_or_create_folder(service, category, branch_id)
         book_id   = find_or_create_folder(service, book_folder, cat_id)
-        run_id    = find_or_create_folder(service, unique_run, book_id)
+        
+        # 2. Handle the "Single Component" (Same UID) logic
+        if existing_run_id:
+            run_id = existing_run_id
+        else:
+            # Only create a new Run folder if one wasn't passed in
+            unique_run = f"Run_{time.strftime('%Y%m%d_%H%M%S')}"
+            run_id = find_or_create_folder(service, unique_run, book_id)
 
-        # 3. Upload with supportsAllDrives
+        # 3. Upload
         media = MediaFileUpload(local_path, mimetype=mime_type, resumable=True)
         file_meta = {'name': os.path.basename(local_path), 'parents': [run_id]}
         
@@ -95,9 +122,11 @@ def upload_to_drive(local_path, pdf_name, config: ProjectConfig, mode="object"):
             supportsAllDrives=True
         ).execute()
 
-        logger.info(f"✅ Drive Sync [{mode}]: {book_folder}/{unique_run}")
-        return uploaded.get('webViewLink')
+        logger.info(f"✅ Drive Sync [{mode}]: {os.path.basename(local_path)} -> Folder ID: {run_id}")
+        
+        # Return both the link AND the run_id so the next call can reuse it
+        return uploaded.get('webViewLink'), run_id
 
     except Exception as e:
-        logger.error(f"❌ Drive Sync Failed ({mode}): {str(e)}")
-        return None
+        logger.error(f"❌ Drive Sync Failed: {str(e)}")
+        return None, None
