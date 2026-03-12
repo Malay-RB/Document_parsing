@@ -116,41 +116,43 @@ def run_pipeline(pdf_name, config: ProjectConfig):
             logger.info(f"🎯 Fallback set. Starting Deep Extraction at Page {physical_start}")
 
         # --- PHASE 3: DEEP EXTRACTION ---
-        logger.info(f":mortar_board: Step 3: Starting Deep Extraction...")
+        logger.info(f"🎓 Step 3: Starting Deep Extraction...")
 
-        with open(temp_jsonl_path, "w", encoding="utf-8") as temp_file:
-            # Iterating over the generator which now yields both LIST and STR
-            extraction_gen = run_deep_extraction(
+        # Initialize the generator OUTSIDE the file context
+        extraction_gen = run_deep_extraction(
             pdf_filename=pdf_name,
             start_page=physical_start,
+            hierarchy=hierarchy, # Ensure this is passed!
+            models=shared_models,
             config=config,
             force_prod=True
         )
 
+        # Single file context for writing
         with open(temp_jsonl_path, "w", encoding="utf-8") as temp_file:
             while True:
                 try:
                     result = next(extraction_gen)
                     if isinstance(result, list):
                         for block in result:
-                            temp_file.write(json.dumps(block) + "\n")
+                            temp_file.write(json.dumps(block, ensure_ascii=False) + "\n")
                             all_final_blocks.append(block)
                             state["total_blocks"] += 1
                         temp_file.flush()
                     elif isinstance(result, dict):
                         caught_debug_files = result
                 except StopIteration:
-                    break
+                    break  # Generator finished normally
                 except (Exception, KeyboardInterrupt) as e:
-                    # Capture the FINAL yield (the paths) even on crash
-                    # This handles the 'finally' yield from the generator
+                    logger.error(f"💥 Extraction Generator failed: {str(e)}")
+                    # Try to catch the final debug paths yielded by 'finally'
                     try:
                         final_res = next(extraction_gen)
                         if isinstance(final_res, dict):
                             caught_debug_files = final_res
                     except:
                         pass
-                    raise e
+                    raise e # Re-raise to be caught by the outer try-except
 
         save_data()
         sync_all_to_cloud()
@@ -180,7 +182,7 @@ def run_pipeline(pdf_name, config: ProjectConfig):
 
 def main():
     cfg = ProjectConfig()
-    run_pipeline(pdf_name="ncert10M_20p", config=cfg)
+    run_pipeline(pdf_name="ncert10M_8p", config=cfg)
 
 if __name__ == "__main__":
     main()

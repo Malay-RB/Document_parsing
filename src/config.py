@@ -27,7 +27,7 @@ class ProjectConfig:
     EXTRACTION_MODEL = "easy"
     SCOUT_LIMIT = 15
     PDF_SCALE = 3.5
-    PG_NO_STRATEGY = "FOOTER"
+    PG_NO_STRATEGY = "HEADER"
     DEBUG_MODE = True
 
     # ------Drive Upload------

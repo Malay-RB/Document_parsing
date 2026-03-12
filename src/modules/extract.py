@@ -253,17 +253,17 @@ def run_deep_extraction(pdf_filename, input_path=None, output_path=None, start_p
 if __name__ == "__main__":
     setup_logger(debug_mode=True)
     cfg = ProjectConfig()
-    TARGET = "ncert10M_8p"
+    TARGET = "CG_Science_5p_10"
     
     all_blocks = []
-    caught_path = None
+    caught_files = {}
     
-    # Correct handling of multi-type generator output
     for result in run_deep_extraction(TARGET, start_page=1):
         if isinstance(result, list):
             all_blocks.extend(result)
-        elif isinstance(result, str):
-            caught_path = result
+        elif isinstance(result, dict):
+            # This catches the final yield: {"visual_pdf": "...", "coords_json": "..."}
+            caught_files = result
 
     # Standard JSON Output
     _, out_base = cfg.get_active_paths()
@@ -275,5 +275,8 @@ if __name__ == "__main__":
         json.dump(all_blocks, f, indent=4, ensure_ascii=False)
         
     logger.info(f"✅ Standalone JSON complete: {out_file}")
-    if caught_path:
-        logger.info(f"🎨 Debug PDF ready for sync: {caught_path}")
+
+    # Update logging to show both files
+    if caught_files:
+        logger.info(f"🎨 Debug PDF ready: {caught_files.get('visual_pdf')}")
+        logger.info(f"📍 Debug Coords ready: {caught_files.get('coords_json')}")
