@@ -231,9 +231,26 @@ def run_pipeline(pdf_name, config: ProjectConfig):
         # UPDATED LOGIC (ANCHOR FALLBACK)
         # ---------------------------------------
         # --- PHASE 2: ANCHOR FALLBACK & HIERARCHY ---
+        # --- PHASE 2: ANCHOR FALLBACK & HIERARCHY ---
         hierarchy = []
         physical_start = sync_results.get("content_start_page")
         toc_pages = sync_results.get("toc_pages", [])
+
+        # ✅ Full TOC extraction on ALL toc pages (not just scout probe page)
+        if toc_pages:
+            logger.info(f"📖 Running full TOC extraction on pages: {toc_pages}")
+            loader = PDFLoader(scale=config.PDF_SCALE)
+            loader.open(full_pdf_path)
+            
+            toc_images = [loader.load_page(p) for p in toc_pages]
+            
+            toc_api = TOCProcessorAPI(models=shared_models)
+            hierarchy, _ = toc_api.run_api(toc_images, debug=debug_mode, model=config.EXTRACTION_MODEL)
+            
+            loader.close()
+            logger.info(f"✅ Full Hierarchy Built: {len(hierarchy)} chapters identified.")
+
+
 
         if not physical_start:
             logger.warning("⚠️ Anchor not detected. Initiating 5-page window fallback.")
