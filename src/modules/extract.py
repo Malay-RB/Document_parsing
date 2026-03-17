@@ -253,7 +253,7 @@ def run_deep_extraction(pdf_filename, input_path=None, output_path=None, start_p
 if __name__ == "__main__":
     setup_logger(debug_mode=True)
     cfg = ProjectConfig()
-    TARGET = "CG_Science_5p_10"
+    TARGET = "hw_3"
     
     all_blocks = []
     caught_files = {}

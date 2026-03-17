@@ -18,7 +18,10 @@ from surya.foundation import FoundationPredictor
 
 from loaders.model_loader import ModelLoader
 from loaders.pdf_loader import PDFLoader
+
 from processing.logger import logger, setup_logger
+
+from config import ProjectConfig
 
 class TOCProcessorAPI:
     def __init__(self, ocr_engine=None):
@@ -137,11 +140,24 @@ class TOCProcessorAPI:
                 print(f"      :white_check_mark: EasyOCR found {len(elements_to_group)} elements.")
 
             if debug:
-                # Create a copy to draw on so we don't mess up the original for OCR
+                # Create a copy of the ORIGINAL (unpadded) image
                 draw_img = img.copy()
                 draw = ImageDraw.Draw(draw_img)
+                
+                # The padding we added earlier
+                LEFT_PAD = 50 
+                TOP_PAD = 0
+
                 for el in elements_to_group:
-                    draw.rectangle(el.bbox, outline="red", width=3)
+                    # Subtract the padding from the coordinates to align with the original image
+                    orig_bbox = [
+                        el.bbox[0] - LEFT_PAD, # xmin
+                        el.bbox[1] - TOP_PAD,  # ymin
+                        el.bbox[2] - LEFT_PAD, # xmax
+                        el.bbox[3] - TOP_PAD   # ymax
+                    ]
+                    draw.rectangle(orig_bbox, outline="red", width=3)
+                
                 debug_frames.append(draw_img)
 
             grouped_lines = self._spatial_grouping(elements_to_group)
@@ -263,21 +279,29 @@ def run_standalone_toc(pdf_filename, page_list=None):
     for p in page_list:
         images.append(loader.load_page(p))
 
-    # Run API
+    # Run API - Unpack the two return values here
     api = TOCProcessorAPI()
-    results = api.run_api(images, model="surya")
+    data_results, debug_images = api.run_api(images, debug=ProjectConfig.DEBUG_MODE, model="surya")
 
-    # Final Export
+    # Final Export: Save ONLY the data_results to JSON
     with open(json_out, "w", encoding="utf-8") as f:
-        json.dump(results, f, indent=4, ensure_ascii=False)
+        json.dump(data_results, f, indent=4, ensure_ascii=False)
+
+    # (Optional) Save the debug images if they exist
+    if debug_images:
+        debug_path = os.path.join(output_dir, "debug_plots")
+        os.makedirs(debug_path, exist_ok=True)
+        for idx, img in enumerate(debug_images):
+            img.save(f"{debug_path}/{pdf_filename}_page_{idx+1}.png")
+        print(f":frame_with_picture: Debug images saved to: {debug_path}")
 
     loader.close()
-    print(f"\n:white_check_mark: SUCCESS: {len(results)} Chapters extracted.")
+    print(f"\n:white_check_mark: SUCCESS: {len(data_results)} Chapters extracted.")
     print(f":floppy_disk: File saved to: {json_out}")
 
 if __name__ == "__main__":
     # SETTINGS:
-    FILENAME = "MH_5p"       # The .pdf name in your input folder
+    FILENAME = "TN_Class_8_Mathematics_TOC"       # The .pdf name in your input folder
     PAGES = None         # Set to None if your PDF is already cropped to TOC only
 
     run_standalone_toc(FILENAME, page_list=PAGES)

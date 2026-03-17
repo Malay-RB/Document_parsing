@@ -60,9 +60,9 @@ class ProjectConfig:
             os.makedirs(os.path.join(output_path, folder), exist_ok=True)
 
 LABEL_MAP = {
-    "Text": "TEXT",
+    "Text": "TEXT",         # Specialized handling for Textual data only
     "Title": "TEXT",
-    "SectionHeader": "TEXT", # Standardized Surya casing
+    "SectionHeader": "TEXT", 
     "List": "TEXT",
     "ListItem": "TEXT",
     "Caption": "TEXT",
@@ -70,15 +70,16 @@ LABEL_MAP = {
     "PageFooter": "TEXT",
     "PageHeader": "TEXT",
 
-    "Formula": "MATH",      # This is the primary trigger for RapidLatexOCR
+    "Formula": "MATH",      # Specialized handling for math equations
     "Equation": "MATH",
     "Text-inline-math": "MATH",
 
-    "Picture": "VISUAL",
+    "Picture": "VISUAL",    # Specialized handling for visuals only
     "Figure": "VISUAL",
     "Image": "VISUAL",
     "Graphic": "VISUAL",
-    "Table": "TABLE"        # You might want specialized handling for tables later
+
+    "Table": "TABLE"        # Specialized handling for Table 
 }
 
 

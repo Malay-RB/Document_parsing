@@ -60,33 +60,62 @@ def run_sync_phase(image, boxes, ocr_engine, model, target_anchor, height, width
     return False
 
 def extract_text_block(image, box, safe_coord, models, ocr_engine, ocr_type):
-    """Main router for individual blocks. Determines whether to use OCR, LaTeX, or skip."""
+    """Main router for individual blocks with Defensive Cropping for Math."""
+    # 1. Coordinate Validation & Clipping
+    img_w, img_h = image.size
     x1, y1, x2, y2 = map(int, safe_coord)
+    
+    # Ensure coordinates are within image boundaries
+    x1, y1 = max(0, x1), max(0, y1)
+    x2, y2 = min(img_w, x2), min(img_h, y2)
+    
     group = LABEL_MAP.get(box.label, "TEXT")
     
-    # 1. VISUAL HANDLING (INFO: Significant for understanding why text is missing)
+    # 2. Visual & Table Handling
+
+    #TODO: Add image extract/save/link
     if group == "VISUAL":
-        logger.info(f"🖼️  Visual Block Detected [{box.label}]: Skipping OCR.")
+        logger.info(f"🖼️ Visual Block Detected [{box.label}]: Skipping OCR.")
         return "[FIGURE_OR_IMAGE_BLOCK]"
 
     if group == "TABLE":
         logger.info("📊 Table Block Detected: Skipping standard OCR.")
         return "[TABLE_BLOCK]"
 
-    # 2. OCR PREPARATION
+    # 3. Valid Crop Check
+    # If the box has no area, return empty string to prevent engine crashes
+    if x2 <= x1 or y2 <= y1:
+        logger.warning(f"⚠️ Skipping zero-area block at {safe_coord}")
+        return ""
+
+    # 4. OCR PREPARATION
     crop = PIL.ImageOps.autocontrast(image.crop((x1, y1, x2, y2)))
 
-    # 3. MATH ROUTING (DEBUG: Technical Detail)
+    # 5. MATH ROUTING (With Exception Handling)
     if group == "MATH":
         logger.debug("📐 Math Block detected. Routing to RapidLatex...")
-        res = models.rapid_latex_engine(np.array(crop))
-        return res[0] if isinstance(res, tuple) else str(res)
+        try:
+            img_arr = np.array(crop)
+            
+            # Final check for empty array or uniform color (prevents division by zero warning)
+            if img_arr.size == 0 or np.ptp(img_arr) == 0:
+                return "[EMPTY_MATH_BLOCK]"
+                
+            res = models.rapid_latex_engine(img_arr)
+            return res[0] if isinstance(res, tuple) else str(res)
+        except Exception as e:
+            logger.error(f"❌ RapidLatex engine crash avoided: {e}")
+            return "[MATH_PROCESSING_ERROR]"
 
-    # 4. TEXT ROUTING (DEBUG: Noise reduction)
+    # 6. TEXT ROUTING
     logger.debug(f"📝 Text Block detected. Routing to {ocr_type} engine...")
-    text_result = ocr_engine.extract(crop, model=ocr_type)
-    
-    if isinstance(text_result, bytes):
-        return text_result.decode("utf-8", errors="ignore")
+    try:
+        text_result = ocr_engine.extract(crop, model=ocr_type)
+        
+        if isinstance(text_result, bytes):
+            return text_result.decode("utf-8", errors="ignore")
 
-    return text_result if isinstance(text_result, str) else ""
+        return text_result if isinstance(text_result, str) else ""
+    except Exception as e:
+        logger.error(f"❌ OCR engine error: {e}")
+        return ""
