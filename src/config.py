@@ -60,45 +60,72 @@ class ProjectConfig:
             os.makedirs(os.path.join(output_path, folder), exist_ok=True)
 
 LABEL_MAP = {
+
     "Text": "TEXT",         # Specialized handling for Textual data only
-    "Title": "TEXT",
-    "SectionHeader": "TEXT", 
+    "Title": "TEXT", 
     "List": "TEXT",
     "ListItem": "TEXT",
-    "Caption": "TEXT",
     "Footnote": "TEXT",
     "PageFooter": "TEXT",
     "PageHeader": "TEXT",
 
+    "SectionHeader": "SECTION_TRIGGER",
+
+    """
+    Heading
+    Subtitle
+    Heading 
+    Subheading
+    Paragraph 
+    BlockText
+    PageNumber
+    Header / Footer
+    FootnoteSeparator
+    OrderedList
+    UnorderedList
+    BulletList
+    """
+
     "Formula": "MATH",      # Specialized handling for math equations
     "Equation": "MATH",
     "Text-inline-math": "MATH",
+
+    """
+    DisplayEquation
+    InlineEquation
+    """
 
     "Picture": "VISUAL",    # Specialized handling for visuals only
     "Figure": "VISUAL",
     "Image": "VISUAL",
     "Graphic": "VISUAL",
 
-    "Table": "TABLE"        # Specialized handling for Table 
+
+    """
+    Chart
+    Diagram
+    Logo
+    """
+
+    "Table": "TABLE",        # Specialized handling for Table 
+
+    """
+    TableCell
+    TableRow
+    TableHeader
+    """
+
+    """
+    FigureCaption
+    TableCaption
+    """
+    "Caption": "CAPTION",    # for labels near the figure
+
 }
 
-
 SEMANTIC_PATTERNS = {
-    # CBSE Chapters are usually uppercase and centered: "CIRCLES", "QUADRATIC EQUATIONS"
-    # We use \b to ensure we don't match short math variables like 'X'
     "CHAPTER": re.compile(r"^[A-Z\s]{5,25}$"),
-
-    # Matches "10.1", "4.2.1", or "Exercise 4.1"
-    "SECTION": re.compile(r"^(?:\d+\.\d+|\d+\.\d+\.\d+|Exercise\s+\d+\.\d+)"),
-
-    "ACTIVITY": re.compile(r"^Activity\s+\d+", re.IGNORECASE),
-
-    "EXAMPLE": re.compile(r"^Example\s+\d+", re.IGNORECASE),
-
-    # Fig. 10.3 or 10.3 (ii) - added Fig to avoid matching simple math decimals
     "FIGURE_CAPTION": re.compile(r"^(?:Fig\.|Figure)\s+\d+\.\d+", re.IGNORECASE),
-    
-    # NEW: Detect if the text is primarily a LaTeX equation to protect it from cleaning
     "IS_LATEX": re.compile(r"\\(?:frac|sqrt|sum|alpha|beta|theta|int|begin|end)|[\^{}$]")
 }
 
