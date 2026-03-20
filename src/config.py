@@ -71,54 +71,19 @@ LABEL_MAP = {
 
     "SectionHeader": "SECTION_TRIGGER",
 
-    """
-    Heading
-    Subtitle
-    Heading 
-    Subheading
-    Paragraph 
-    BlockText
-    PageNumber
-    Header / Footer
-    FootnoteSeparator
-    OrderedList
-    UnorderedList
-    BulletList
-    """
-
     "Formula": "MATH",      # Specialized handling for math equations
     "Equation": "MATH",
     "Text-inline-math": "MATH",
 
-    """
-    DisplayEquation
-    InlineEquation
-    """
+
 
     "Picture": "VISUAL",    # Specialized handling for visuals only
     "Figure": "VISUAL",
     "Image": "VISUAL",
     "Graphic": "VISUAL",
 
-
-    """
-    Chart
-    Diagram
-    Logo
-    """
-
     "Table": "TABLE",        # Specialized handling for Table 
 
-    """
-    TableCell
-    TableRow
-    TableHeader
-    """
-
-    """
-    FigureCaption
-    TableCaption
-    """
     "Caption": "CAPTION",    # for labels near the figure
 
 }

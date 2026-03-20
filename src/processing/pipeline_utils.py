@@ -125,6 +125,7 @@ def extract_page_block(image, box, safe_coord, models, ocr_engine, ocr_type, box
     x2, y2 = min(img_w, x2), min(img_h, y2)
     
     group = LABEL_MAP.get(box.label, "TEXT")
+    logger.info(f"DEBUG: Processing Block. Label='{box.label}', Assigned Group='{group}'") 
 
     # 2. CAPTION HANDLING (Rule: Parent search ignores standalone Captions)
     if group == "CAPTION":

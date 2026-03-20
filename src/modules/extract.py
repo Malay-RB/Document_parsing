@@ -94,6 +94,7 @@ def run_single_page(
     page_blocks = []
 
     for i, box in enumerate(boxes):
+        print(f"DEBUG: Box {i} | Raw Model Label: '{box.label}' | Group: {LABEL_MAP.get(box.label, 'NOT_IN_MAP')}")
         local_idx = i + 1
         coords = safe_coords[i]
 
@@ -410,7 +411,7 @@ def run_deep_extraction(pdf_filename, input_path=None, output_path=None, start_p
 if __name__ == "__main__":
     setup_logger(debug_mode=True)
     cfg = ProjectConfig()
-    TARGET = "test_img_sec"
+    TARGET = "Class-7-Science-2p"
     
     all_blocks = []
     caught_files = {}
