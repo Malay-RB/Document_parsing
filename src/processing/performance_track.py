@@ -56,7 +56,7 @@ def convert_size(size_bytes):
 
 # --- DECORATOR ---
 
-def track_telemetry(func):
+def track_performance(func):
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
         start_wall = time.strftime("%H:%M:%S")

@@ -15,12 +15,12 @@ from processing.pipeline_utils import run_scout_phase, run_sync_phase
 from processing.optimize_layout import filter_overlapping_boxes, get_unified_sorting
 from exporters.exporter import PDFDebugExporter
 from processing.logger import logger
-from processing.performance_track import track_telemetry
+from processing.performance_track import track_performance
 from config import ProjectConfig
 from processing.logger import setup_logger
 from processing.optimize_layout import draw_layout
 
-@track_telemetry
+@track_performance
 def run_scout_sync(pdf_name, input_path=None, output_path=None, models=None, config=None, force_prod=False):
     """
     Optimized Scout & Sync module with Auto-Environment Detection.

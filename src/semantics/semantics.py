@@ -41,15 +41,12 @@ class SemanticClassifier:
             }
 
         # 3. PATTERN MATCHING
-        # Chapter Fix for specific OCR edge cases
-        if len(cleaned) <= 15 and cleaned.upper().endswith("IRCLES"):
-            return {"role": "CHAPTER", "clean_text": "CIRCLES"}
-
-        for role in ["CHAPTER", "SECTION", "ACTIVITY", "EXAMPLE", "FIGURE_CAPTION"]:
+        for role in [ "SECTION", "FIGURE_CAPTION"]:
             if role in SEMANTIC_PATTERNS and SEMANTIC_PATTERNS[role].search(cleaned):
                 return {"role": role, "clean_text": cleaned}
+            
 
-        # 4. DEFAULT
+        # 6. DEFAULT
         return {"role": "BODY", "clean_text": cleaned}
     
     def clean_latex_ocr_noise(self, text):
@@ -68,42 +65,25 @@ class SemanticClassifier:
 class ContextTracker:
     def __init__(self):
         self.state = {
-            "chapter": "Unknown",
             "section": None,
-            "activity": None,
-            "example": None,
-            "current_chapter_verify": "Unknown"
+            "section_id": None,
+            "section_counter": 0,
         }
 
-    def update(self, role, text):
-        if not text or len(text.strip()) < 2:
-            return
+    def update(self, role, text, metadata=None):
+        if role == "SECTION":
+            # Increment section counter
+            self.state["section_counter"] += 1
+            
+            # Assign new section
+            self.state["section"] = text
+            self.state["section_id"] = self.state['section_counter']
+            self.state["is_in_solution"] = False
 
-        # CHAPTER: Only update if it's a NEW chapter to prevent resets on page headers
-        if role == "CHAPTER":
-            if self.state["chapter"] != text:
-                self.state["chapter"] = text
-                self.state["current_chapter_verify"] = text
-                # Reset sub-hierarchy only on a true new chapter
-                self.state["section"] = None
-                self.state["activity"] = None
-                self.state["example"] = None
-
-        # SECTION: Update section and reset activity/example
-        elif role == "SECTION":
-            if self.state["section"] != text:
-                self.state["section"] = text
-                self.state["activity"] = None
-                self.state["example"] = None
-
-        elif role == "ACTIVITY":
-            self.state["activity"] = text
-
-        elif role == "EXAMPLE":
-            self.state["example"] = text
+        elif role == "SOLUTION_START":
+            self.state["is_in_solution"] = True
 
     def attach_metadata(self):
-        # Return a deep copy to ensure block_data doesn't change if the tracker updates later
         return self.state.copy()
     
 
@@ -134,7 +114,7 @@ def bind_figures(blocks):
         return merged
     
 
-def transform_structure(process_output, block_index=0):
+def transform_structure(process_output, block_index=0, id_map = None):
     """
     Final Schema Mapper. 
     Syncs the semantic_role from the classifier to the content_type in JSON.
@@ -154,6 +134,14 @@ def transform_structure(process_output, block_index=0):
     chap_id = toc.get("chapter_id") or "0"
     pdf_p = process_output.get("pdf_page") or "0"
 
+    local_ids = process_output.get("nearby_content_ids", [])
+    global_ids =  []
+
+    if id_map:
+        for local_idx in local_ids:
+            if local_idx in id_map:
+                global_ids.append(id_map[local_idx])
+
     transformed = {
         "id": f"u{unit_id}_c{chap_id}_p{pdf_p}_b{block_index}",
         "sequence_id": block_index,
@@ -161,11 +149,14 @@ def transform_structure(process_output, block_index=0):
         "unit_name": toc.get("unit_name"),
         "chapter_id": toc.get("chapter_id"),
         "chapter_name": toc.get("chapter_name"),
+        "section_id": process_output.get("section_id"),
         "page_number": process_output.get("printed_page"),
         "pdf_page": process_output.get("pdf_page"),
         "block_index": block_index,
         "content_type": content_type, # This will now be 'equation', 'chapter', 'body', etc.
-        "text": process_output.get("text", "")
+        "text": process_output.get("text", ""),
+        "nearby_content_ids": global_ids,
+        "image": process_output.get("figure_path")
     }
     
     return transformed

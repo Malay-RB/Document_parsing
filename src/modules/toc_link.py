@@ -1,128 +1,89 @@
 import os
 import json
 
+def flatten_toc(data):
+    """Digs through nested lists [[{}]] to find the flat list of chapters."""
+    if isinstance(data, list):
+        if not data: return []
+        if isinstance(data[0], list): return flatten_toc(data[0])
+        return data
+    return []
 
-def load_json(path):
-    """Load JSON file."""
-    with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
-
-
-def fix_toc_start_pages(toc_data):
-    """
-    Fix missing start_page values in TOC.
-    """
+def get_chapter_info(page, toc_data):
+    """Finds the TOC entry that contains the given printed page."""
     for entry in toc_data:
-        if entry.get("start_page") is None:
-            entry["start_page"] = 1
-    return toc_data
-
-
-def get_chapter_for_page(page, toc_data):
-    """
-    Find the chapter corresponding to a given printed page.
-    """
-    for entry in toc_data:
-
         start = entry.get("start_page")
         end = entry.get("end_page")
+        if start is None: continue
 
-        if start is None:
-            continue
-
-        # Case 1: chapter has start and end page
-        if end is not None:
-            if start <= page <= end:
-                return entry.get("chapter_id"), entry.get("chapter_name")
-
-        # Case 2: open-ended chapter
-        else:
-            if page >= start:
-                return entry.get("chapter_id"), entry.get("chapter_name")
-
-    return None, None
-
-
-def link_toc_with_blocks(toc_data, blocks):
-    """
-    Attach chapter metadata to extracted blocks.
-    """
-
-    for block in blocks:
-
-        # IMPORTANT FIX
-        page_number = block.get("page_number")
-
-        if page_number is None:
-            continue
-
-        try:
-            page_number = int(page_number)
-        except:
-            continue
-
-        chapter_id, chapter_name = get_chapter_for_page(
-            page_number,
-            toc_data
-        )
-
-        block["chapter_id"] = chapter_id
-        block["chapter_name"] = chapter_name
-
-    return blocks
-
+        # Match range or open-ended last chapter
+        if (end and start <= page <= end) or (not end and page >= start):
+            return entry
+    return {}
 
 def run_linking(toc_path, book_path, output_path):
+    print(":blue_book: Loading TOC and Book data...")
+    raw_toc = []
+    with open(toc_path, "r", encoding="utf-8") as f:
+        raw_toc = json.load(f)
 
-    print(":blue_book: Loading TOC JSON...")
-    toc_data = load_json(toc_path)
+    toc_data = flatten_toc(raw_toc)
 
-    print(":green_book: Loading extracted book JSON...")
-    blocks = load_json(book_path)
+    with open(book_path, "r", encoding="utf-8") as f:
+        blocks = json.load(f)
 
-    toc_data = fix_toc_start_pages(toc_data)
+    print(":link: Building final structured IDs and linking metadata...")
+    final_results = []
 
-    print(":link: Linking TOC with book blocks...")
-    linked_blocks = link_toc_with_blocks(toc_data, blocks)
+    for block in blocks:
+        # 1. Extract the printed page number
+        try:
+            curr_page = int(block.get("page_number", 0))
+        except (ValueError, TypeError):
+            curr_page = 0
 
+        # 2. Lookup TOC metadata
+        info = get_chapter_info(curr_page, toc_data)
+
+        # 3. Fill metadata
+        u_id = info.get("unit_id") if info.get("unit_id") is not None else 0
+        u_name = info.get("unit_name")
+        c_id = info.get("chapter_id") if info.get("chapter_id") is not None else 0
+        c_name = info.get("chapter_name")
+
+        # 4. Generate the dynamic ID: u{unit}_c{chapter}_p{pdf_page}_b{block_index}
+        # Example: u0_c1_p10_b1
+        pdf_p = block.get("pdf_page", 0)
+        b_idx = block.get("block_index", 0)
+        generated_id = f"u{u_id}_c{c_id}_p{pdf_p}_b{b_idx}"
+
+        # 5. Build the final object in your requested format
+        structured_block = {
+            "id": generated_id,
+            "sequence_id": block.get("sequence_id"),
+            "unit_id": info.get("unit_id"), # Keeping null if not found in TOC
+            "unit_name": u_name,
+            "chapter_id": info.get("chapter_id"),
+            "chapter_name": c_name,
+            "page_number": curr_page,
+            "pdf_page": pdf_p,
+            "block_index": b_idx,
+            "content_type": block.get("content_type", "body"),
+            "text": block.get("text", "")
+        }
+        final_results.append(structured_block)
+
+    # Save final results
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
-
     with open(output_path, "w", encoding="utf-8") as f:
-        json.dump(linked_blocks, f, indent=4, ensure_ascii=False)
+        json.dump(final_results, f, indent=4, ensure_ascii=False)
 
-    print(f"\n:white_check_mark: Linking complete → {output_path}")
-
+    print(f":white_check_mark: Linking complete! Saved to: {output_path}")
 
 if __name__ == "__main__":
+    # Update these paths to your actual local files
+    TOC_PATH = "modules/output/toc/toc4_toc.json"
+    BOOK_PATH = "modules/output/extraction_results/class_4_Maths_Ncert_standalone.json"
+    OUT_PATH = "modules/output/linked_results/class_4th_maths_structured.json"
 
-    # USER INPUT
-
-    BOOK_NAME = "ncert121e_standalone"
-    TOC_FILE = "toc_121ncert_toc.json"
-
-    # AUTO PATH RESOLUTION
-
-    base_dir = os.path.dirname(__file__)
-
-    toc_json = os.path.join(
-        base_dir,
-        "output",
-        "toc_json",
-        TOC_FILE
-    )
-
-    extracted_book = os.path.join(
-        base_dir,
-        "output",
-        "extraction_results",
-        f"{BOOK_NAME}.json"
-    )
-
-    output_file = os.path.join(
-        base_dir,
-        "output",
-        "linked_results",
-        f"{BOOK_NAME}_final_structured.json"
-    )
-
-    run_linking(toc_json, extracted_book, output_file)
+    run_linking(TOC_PATH, BOOK_PATH, OUT_PATH)
