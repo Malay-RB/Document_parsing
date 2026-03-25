@@ -104,7 +104,7 @@ def run_pipeline(pdf_name, config: ProjectConfig):
         sync_results = run_scout_sync(pdf_name=pdf_name, models=shared_models, config=config, force_prod=True)
         
         hierarchy = sync_results.get("hierarchy", []) if sync_results else []
-        
+
         physical_start = sync_results.get("content_start_page") if sync_results else None
         toc_pages = sync_results.get("toc_pages", [])
 
@@ -121,7 +121,7 @@ def run_pipeline(pdf_name, config: ProjectConfig):
             fallback_imgs = [loader.load_page(p) for p in valid_range]
             
             toc_api = TOCProcessorAPI(models=shared_models)
-            hierarchy, _ = toc_api.run_api(fallback_imgs, debug=debug_mode, model=config.EXTRACTION_MODEL)
+            hierarchy, _ = toc_api.run_api(fallback_imgs, debug=debug_mode, model="surya")
             loader.close()
 
             physical_start = scan_start + 5
@@ -217,7 +217,7 @@ def run_pipeline(pdf_name, config: ProjectConfig):
 
 def main():
     cfg = ProjectConfig()
-    run_pipeline(pdf_name="Class10 - Maths_10p", config=cfg)
+    run_pipeline(pdf_name="ncert10M_20p", config=cfg)
 
 if __name__ == "__main__":
     main()

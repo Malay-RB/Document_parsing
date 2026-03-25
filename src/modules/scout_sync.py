@@ -143,21 +143,39 @@ def run_scout_sync(pdf_name, input_path=None, output_path=None, models=None, con
             if page_no % 3 == 0: 
                 gc.collect()
 
-        # 3. FINAL SUMMARY
-        tracking_report = {
-            "pdf_filename": pdf_name,
-            "toc_pages": state["toc_buffer"],
-            "content_start_page": page_no if state["sync_completed"] else None,
-            "anchor_used": state["target_anchor"],
-            "hierarchy": state["hierarchy_data"]
-        }
-
+        # --- 3. FINAL SUMMARY ---
         if state["sync_completed"]:
+            logger.info(f"✨ Sync complete. Running FULL TOC extraction on pages: {state['toc_buffer']}")
+            
+            # 1. Load the images for ALL buffered TOC pages
+            # (Reloading keeps memory usage low during the scan phase)
+            toc_images = []
+            for p_no in state["toc_buffer"]:
+                toc_images.append(pdf_loader.load_page(p_no))
+
+            # 2. Run the Robust TOC Processor ONCE on the full stack
+            full_hierarchy, _ = toc_api.run_api(toc_images, debug=debug_mode, model="surya")
+
+            # 3. Build and return the final report
+            tracking_report = {
+                "pdf_filename": pdf_name,
+                "toc_pages": state["toc_buffer"],
+                "content_start_page": page_no, 
+                "anchor_used": state["target_anchor"],
+                "hierarchy": full_hierarchy # 🎯 Hierarchy from the first call
+            }
+
+            # Save the JSON report for auditing
             report_path = os.path.join(report_dir, f"{pdf_name}_sync_report.json")
             with open(report_path, "w") as f:
                 json.dump(tracking_report, f, indent=4)
-            logger.info(f"📊 SYNC REPORT SAVED: {report_path}")
+            
             return tracking_report
+
+        # If sync failed but we found a TOC, return the partial report safely
+        if state["toc_buffer"]:
+            logger.warning(f"⚠️ Sync failed but TOC found on pages: {state['toc_buffer']}")
+            return tracking_report # Now safe to return
 
         # If sync failed but we found a TOC, return partial results
         if state["toc_buffer"]:

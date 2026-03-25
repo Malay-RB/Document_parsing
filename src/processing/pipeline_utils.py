@@ -57,31 +57,31 @@ def run_internal_sweep(image, boxes, current_idx, ocr_engine, ocr_type):
                 
     return None
 
-# --- MODIFIED FRAMEWORK FUNCTIONS ---
-
 def run_scout_phase(image, boxes, ocr_engine, model, page_no, width, height):
-    """Detects TOC triggers (Contents/Index) in the top-most box of a page."""
-    # DEBUG: The model choice is a technical detail
+    """Detects TOC triggers (Contents/Index) ONLY if they are the standalone text of a box."""
     logger.debug(f"🔍 [Scout] Using '{model}' engine for Page {page_no}")
     
     if not boxes: 
         return False, None
     
-    # We only scout the very first box (top of page)
+    # 1. Standard Extraction
     first_box = boxes[0]
     x1, y1, x2, y2 = map(int, first_box.bbox)
     crop = image.crop((max(0, x1-5), max(0, y1-5), min(width, x2+5), min(height, y2+5)))
     
     header_text = ocr_engine.extract(crop, model=model).lower().strip()
-    
-    # INFO: We want to see the header of every scouted page in the main log
     logger.info(f"📄 [Scout Page {page_no}] Header: '{header_text}'")
 
-    triggers = ["content", "contents", "index", "Table of content", "Table of content"]
+    # 2. Strict Cleaning: Remove trailing punctuation like dots or colons
+    # This turns "Contents." or "Index:" into "contents" or "index"
+    clean_trigger = re.sub(r'[^\w\s]', '', header_text).strip()
+
+    # 3. Define Keywords (Lowercase for matching)
+    TOC_KEYWORDS = ["content", "contents", "index", "table of content", "table of contents"]
     
-    if any(keyword in header_text for keyword in triggers):
-        # INFO: Major milestone for the pipeline
-        logger.info(f"🎯 TRIGGER: '{header_text}' matches TOC keywords on Page {page_no}.")
+    # 🎯 FIX: Use 'in' on the list itself for an EXACT match check
+    if clean_trigger in TOC_KEYWORDS:
+        logger.info(f"🎯 TRIGGER: '{header_text}' matches standalone TOC keyword on Page {page_no}.")
         return True, header_text
         
     return False, None
