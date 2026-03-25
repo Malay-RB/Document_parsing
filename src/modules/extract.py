@@ -46,26 +46,55 @@ def run_single_page(
 
     # --- TOC HELPER ---
     def get_toc_metadata(current_page, h_data):
+        """
+        Finds the correct hierarchy for a page.
+        Prioritizes Subtopics while preserving Chapter context.
+        """
+        default_meta = {
+            "unit_id": None, "unit_name": None,
+            "chapter_id": None, "chapter_name": None, 
+            "subtopic_id": None, "subtopic_name": None
+        }
+
         if not h_data or current_page is None:
-            return {"chapter_id": None, "chapter_name": None}
+            return default_meta
+
         try:
             current_page = int(current_page)
         except ValueError:
             return {"chapter_id": None, "chapter_name": None}
 
+        # 🎯 Step 1: Find the specific subtopic first
         for entry in h_data:
-            start = entry.get("start_page")
-            end = entry.get("end_page")
+            if not entry.get("is_subtopic"):
+                continue
+                
+            start, end = entry.get("start_page"), entry.get("end_page")
             if start is not None and end is not None:
                 if start <= current_page <= end:
                     return {
+                        "unit_id": entry.get("unit_id"),
+                        "unit_name": entry.get("unit_name"),
                         "chapter_id": entry.get("chapter_id"),
-                        "chapter_name": entry.get("chapter_name")
+                        "chapter_name": entry.get("chapter_name"), # This is "SET LANGUAGE"
+                        "subtopic_id": entry.get("subtopic_id"),
+                        "subtopic_name": entry.get("subtopic_name") # This is "Introduction T"
                     }
-            elif start is not None and current_page >= start:
+
+        # 🎯 Step 2: Fallback to general Chapter if no subtopic matches
+        for entry in h_data:
+            if entry.get("is_subtopic"):
+                continue
+                
+            start, end = entry.get("start_page"), entry.get("end_page")
+            if start is not None and ((end and start <= current_page <= end) or (not end and current_page >= start)):
                 return {
+                    "unit_id": entry.get("unit_id"),
+                    "unit_name": entry.get("unit_name"),
                     "chapter_id": entry.get("chapter_id"),
-                    "chapter_name": entry.get("chapter_name")
+                    "chapter_name": entry.get("chapter_name"),
+                    "subtopic_id": None,
+                    "subtopic_name": None
                 }
 
         return {"chapter_id": None, "chapter_name": None}
@@ -95,7 +124,7 @@ def run_single_page(
 
     for i, box in enumerate(boxes):
         print(f"DEBUG: Box {i} | Raw Model Label: '{box.label}' | Group: {LABEL_MAP.get(box.label, 'NOT_IN_MAP')}")
-        local_idx = i + 1
+        layout_index  = i + 1
         coords = safe_coords[i]
 
         draw.rectangle(coords, outline="red", width=3)
@@ -104,7 +133,7 @@ def run_single_page(
         chapter_info = get_toc_metadata(printed_no, hierarchy_data)
         u_id = chapter_info.get("unit_id") or "0"
         c_id = chapter_info.get("chapter_id") or "0"
-        current_block_id = f"u{u_id}_c{c_id}_p{page_no}_b{local_idx}"
+        current_block_id = f"u{u_id}_c{c_id}_p{page_no}_b{layout_index}"
 
         res_content = extract_page_block(
             image,
@@ -115,21 +144,31 @@ def run_single_page(
             ocr_type="easy",
         )
 
-        if res_content == "[SKIP_STANDALONE_CAPTION]":
-            print(f"⏭️ Skipping standalone caption at block {i}")
-            continue
+        # if res_content == "[SKIP_STANDALONE_CAPTION]":
+        #     print(f"⏭️ Skipping standalone caption at block {i}")
+        #     continue
 
-        # --- VISUAL CHECK ---
-        is_visual = LABEL_MAP.get(box.label) == "VISUAL"
+        
+        label_group = LABEL_MAP.get(box.label) 
 
-        if not is_visual:
-            # Pass box.label to classifier to identify SectionHeader
+        if label_group == "VISUAL":
+            role = "FIGURE_BLOCK"
+            clean_text = ""
+        elif label_group == "TABLE":
+            # 🎯 Tables now follow the visual extraction flow
+            role = "TABLE_BLOCK"
+            clean_text = ""
+        elif label_group == "MATH":
+            role = "EQUATION"
+            clean_text = res_content
+        elif label_group == "CAPTION":
+            # 🎯 FORCED ROLE for Captions
+            role = "CAPTION"
+            clean_text = res_content
+        else:
             semantic_res = classifier.classify(res_content, layout_label=box.label)
             role = semantic_res["role"]
             clean_text = semantic_res["clean_text"]
-        else:
-            role = "FIGURE_BLOCK"
-            clean_text = ""
 
 
         # --- STATE BEFORE UPDATE ---
@@ -137,46 +176,47 @@ def run_single_page(
         # --- SECTION HANDLING ---
         if role == "SECTION":
             block_section_id = None
+            parent_link = None
         else:
+            parent_link = current_state.get("section_block_id")
             block_section_id = current_state.get("section_id")
 
         # --- UPDATE CONTEXT ---
         context_tracker.update(role, clean_text, block_id=current_block_id)
 
-        # --- FIGURE HANDLING ---
-        figure_path = None
-        if role == "FIGURE_BLOCK":
+        # --- FIGURE HANDLING --- (FIGURES & TABLES)
+        asset_path = None
+        if role in ["FIGURE_BLOCK", "TABLE_BLOCK"]:
             try:
                 x0, y0, x1, y1 = coords
-                figure_crop = image.crop((x0, y0, x1, y1))
+                crop = image.crop((x0, y0, x1, y1))
 
-                fig_filename = f"{uuid.uuid4().hex}.png"
-                fig_save_path = os.path.join(save_dir, fig_filename)
+                asset_filename = f"{uuid.uuid4().hex}.png"
+                asset_save_path = os.path.join(save_dir, asset_filename)
 
-                figure_crop.save(fig_save_path, format="PNG")
-                figure_crop.close()
+                crop.save(asset_save_path, format="PNG")
+                crop.close()
 
-                figure_path = fig_save_path
-                print(f"   🖼️ Figure saved: {fig_save_path}")
+                asset_path = asset_save_path
+                print(f"   🖼️ Figure saved: {asset_save_path}")
 
-            except Exception as crop_err:
-                print(f"   ⚠️ Error saving figure: {crop_err}")
-                figure_path = None
-
-        
+            except Exception as err:
+                print(f"   ⚠️ Save Error: {err}")
 
         # --- FINAL BLOCK ---
         block_data = {
+            "id": current_block_id,
             "pdf_page": page_no,
             "printed_page": printed_no,
             "content_label": box.label,
             "text": clean_text,
             "bbox": coords,
             "section_id": block_section_id,
-            "parent_section_block_id": current_state["section_block_id"],
+            "parent_section_block_id": parent_link,
             "semantic_role": role,
             "toc_link": chapter_info,
-            "figure_path": figure_path,
+            "asset": asset_path,
+            "block_index": layout_index,
         }
 
         page_blocks.append(block_data)
@@ -195,38 +235,38 @@ def run_single_page(
         for block in page_blocks
     ]
 
-    for fig_idx, fig_block in enumerate(page_blocks):
+    for asset_idx, asset_block in enumerate(page_blocks):
 
-        if fig_block.get("semantic_role") != "FIGURE_BLOCK":
+        if asset_block.get("semantic_role") not in ["FIGURE_BLOCK", "TABLE_BLOCK"]:
             continue
 
-        fig_centre = centres[fig_idx]
-        fig_seq = fig_block.get("block_index") or fig_idx
+        asset_centre = centres[asset_idx]
+        asset_seq = asset_block["block_index"]
 
         distances = []
 
         for other_idx, other_block in enumerate(page_blocks):
 
-            if other_idx == fig_idx:
+            if other_idx == asset_idx:
                 continue
 
-            if other_block.get("semantic_role") == "FIGURE_BLOCK":
+            if other_block.get("semantic_role") in ["FIGURE_BLOCK", "TABLE_BLOCK"]:
                 continue
 
             other_centre = centres[other_idx]
-            dist_sq = _euclidean_sq(fig_centre, other_centre)
+            dist_sq = _euclidean_sq(asset_centre, other_centre)
 
-            other_seq = other_block.get("block_index") or other_idx
+            other_seq = other_block["block_index"]
 
-            distances.append((dist_sq, abs(other_seq - fig_seq), other_idx))
+            distances.append((dist_sq, abs(other_seq - asset_seq), other_idx))
 
         distances.sort(key=lambda x: (x[0], x[1]))
 
         nearby_ids = []
         for _, _, idx in distances[:NEARBY_COUNT]:
-            nearby_ids.append(page_blocks[idx].get("block_index") or idx)
+            nearby_ids.append(page_blocks[idx]["block_index"])
 
-        fig_block["nearby_content_ids"] = nearby_ids
+        asset_block["nearby_content_ids"] = nearby_ids
 
     print(f"✅ Finished page {page_no} with {len(page_blocks)} blocks\n")
 
@@ -332,29 +372,34 @@ def run_deep_extraction(pdf_filename, input_path=None, output_path=None, start_p
                     logger.info(f"🔓 Offset Locked ({tracker.offset}). Flushing {len(pending_buffer)} pages...")
                     for old_pdf_no, old_blocks in pending_buffer:
                         corrected_no = old_pdf_no + tracker.offset
+
+                        # 🎯 FIX: Build id_map for the buffered page
+                        page_id_map = { b["block_index"]: b["id"] for b in old_blocks }
+
                         transformed_batch = []
-                        for i, b in enumerate(old_blocks):
+                        for b in old_blocks:
                             b["printed_page"] = corrected_no
-                            transformed_batch.append(transform_structure(b, block_index= i + 1))
+                            transformed_batch.append(
+                                transform_structure(b, block_index=b["block_index"], id_map=page_id_map)
+                            )
                         yield transformed_batch
                     pending_buffer.clear()
 
                 # Build mapping: local_idx → global block_index
                 id_map = {
-                    i: block_counter + i
-                    for i in range(len(current_page_blocks))
+                    b["block_index"]: b["id"] 
+                    for b in current_page_blocks
                 }
 
                 # YIELD: blocks from the current (just-processed) page
                 transformed_page = [
                     transform_structure(
                         b,
-                        block_index=block_counter + i,
+                        block_index=b["block_index"],
                         id_map=id_map
                     )
-                    for i, b in enumerate(current_page_blocks)
+                    for b in current_page_blocks
                 ]
-                block_counter += len(transformed_page)
                 yield transformed_page
             else:
                 pending_buffer.append((page_no, current_page_blocks))
@@ -365,8 +410,13 @@ def run_deep_extraction(pdf_filename, input_path=None, output_path=None, start_p
         # Emergency yield of buffered blocks
         if pending_buffer:
             for _, old_blocks in pending_buffer:
-                recovered_batch = [transform_structure(b, block_index=block_counter) for b in old_blocks]
-                block_counter += len(recovered_batch)
+                # 🎯 FIX: Build id_map for recovery
+                rec_id_map = { b["block_index"]: b["id"] for b in old_blocks }
+                recovered_batch = [
+                    transform_structure(b, block_index=b["block_index"], id_map=rec_id_map) 
+                    for b in old_blocks
+                ]
+                
                 yield recovered_batch
         raise e 
 
@@ -375,8 +425,13 @@ def run_deep_extraction(pdf_filename, input_path=None, output_path=None, start_p
         if pending_buffer and not offset_locked:
             logger.warning("⚠️ Final flush: Pagination offset never found.")
             for _, old_blocks in pending_buffer:
-                final_batch = [transform_structure(b, block_index=block_counter) for b in old_blocks]
-                block_counter += len(final_batch)
+                # 🎯 FIX: Build id_map for final cleanup
+                fin_id_map = { b["block_index"]: b["id"] for b in old_blocks }
+                final_batch = [
+                    transform_structure(b, block_index=b["block_index"], id_map=fin_id_map) 
+                    for b in old_blocks
+                ]
+                
                 yield final_batch
         
         # --- EXCEPTION-SAFE DEBUG PDF FINALIZATION ---
@@ -411,7 +466,7 @@ def run_deep_extraction(pdf_filename, input_path=None, output_path=None, start_p
 if __name__ == "__main__":
     setup_logger(debug_mode=True)
     cfg = ProjectConfig()
-    TARGET = "Class-7-Science-2p"
+    TARGET = "test_sec"
     
     all_blocks = []
     caught_files = {}

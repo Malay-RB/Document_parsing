@@ -19,6 +19,7 @@ from processing.performance_track import track_performance
 from config import ProjectConfig
 from processing.logger import setup_logger
 from processing.optimize_layout import draw_layout
+from processing.toc_patterns import patch_toc_processor
 
 @track_performance
 def run_scout_sync(pdf_name, input_path=None, output_path=None, models=None, config=None, force_prod=False):
@@ -73,8 +74,10 @@ def run_scout_sync(pdf_name, input_path=None, output_path=None, models=None, con
     
     # Pass both engines and injected models
     toc_api = TOCProcessorAPI(ocr_engine=ocr_engine, models=models)
+    patch_toc_processor(toc_api)
 
     state = {
+        "hierarchy_data": [],
         "is_discovering_toc": False,
         "toc_buffer": [],
         "target_anchor": None,
@@ -106,11 +109,12 @@ def run_scout_sync(pdf_name, input_path=None, output_path=None, models=None, con
                     state["scout_images"].append(draw_layout(image, boxes))
                     
                     # PROBE: Identify Anchor text (e.g., Chapter 1 title)
-                    probe_results, debug_frames = toc_api.run_api([image], debug=debug_mode, model=extraction_model)
+                    probe_results, debug_frames = toc_api.run_api([image], debug=debug_mode, model="surya")
                     if debug_frames: 
                         state["debug_images"].extend(debug_frames)
 
                     if probe_results:
+                        state["hierarchy_data"] = probe_results
                         state["target_anchor"] = probe_results[0]["chapter_name"].lower()
                         logger.info(f"⚓ ANCHOR CAPTURED: '{state['target_anchor']}'")
                     else:
@@ -144,7 +148,8 @@ def run_scout_sync(pdf_name, input_path=None, output_path=None, models=None, con
             "pdf_filename": pdf_name,
             "toc_pages": state["toc_buffer"],
             "content_start_page": page_no if state["sync_completed"] else None,
-            "anchor_used": state["target_anchor"]
+            "anchor_used": state["target_anchor"],
+            "hierarchy": state["hierarchy_data"]
         }
 
         if state["sync_completed"]:

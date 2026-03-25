@@ -1,4 +1,5 @@
 import time
+import yaml
 import os
 import json
 import gc
@@ -12,6 +13,7 @@ from modules.toc_extractor import TOCProcessorAPI
 from modules.extract import run_deep_extraction
 from exporters.drive_upload import upload_to_drive  # Ensure correct import path
 from config import ProjectConfig
+from modules.yaml_exporter import convert_json_to_yaml
 
 def format_runtime(seconds: float) -> str:
     seconds = int(seconds)
@@ -46,6 +48,9 @@ def run_pipeline(pdf_name, config: ProjectConfig):
     temp_jsonl_path = final_output_path.replace(".json", ".jsonl")
     full_pdf_path = os.path.join(in_path, f"{pdf_name}.pdf")
 
+    yaml_dir = os.path.join(out_path, "yaml")
+    yaml_output_path = os.path.join(yaml_dir, f"{pdf_name}_final_structured.yaml")
+
     logger.info(f":rocket: Pipeline started for {pdf_name}")
 
     state = {"total_blocks": 0}
@@ -53,13 +58,19 @@ def run_pipeline(pdf_name, config: ProjectConfig):
     caught_debug_pdf_path = None # State to hold the debug path from generator
     caught_debug_files = {}
 
+
     def save_data():
         if all_final_blocks:
+            # 1. Standard JSON save
             logger.info(f":floppy_disk: Finalizing: Saving {len(all_final_blocks)} blocks to {final_output_path}")
             with open(final_output_path, "w", encoding="utf-8") as f:
                 json.dump(all_final_blocks, f, indent=4, ensure_ascii=False)
-            if os.path.exists(temp_jsonl_path):
-                os.remove(temp_jsonl_path)
+
+            # 2. 🎯 Integrated YAML Call (Based on Flag)
+            if config.ENABLE_YAML_EXPORT:
+                # Construct the path for the YAML file inside the output directory
+                yaml_save_path = os.path.join(out_path, "yaml", f"{pdf_name}_final_structured.yaml")
+                convert_json_to_yaml(all_final_blocks, yaml_save_path)
         else:
             logger.warning(":warning: No blocks processed.")
             if os.path.exists(temp_jsonl_path):
@@ -92,7 +103,8 @@ def run_pipeline(pdf_name, config: ProjectConfig):
         # --- PHASE 1 & 2: SCOUT & SYNC ---
         sync_results = run_scout_sync(pdf_name=pdf_name, models=shared_models, config=config, force_prod=True)
         
-        hierarchy = []
+        hierarchy = sync_results.get("hierarchy", []) if sync_results else []
+        
         physical_start = sync_results.get("content_start_page") if sync_results else None
         toc_pages = sync_results.get("toc_pages", [])
 
@@ -114,6 +126,28 @@ def run_pipeline(pdf_name, config: ProjectConfig):
 
             physical_start = scan_start + 5
             logger.info(f"🎯 Fallback set. Starting Deep Extraction at Page {physical_start}")
+
+        # --- 🎯 TOC DEBUG PRINT BLOCK ---
+        if hierarchy:
+            print("\n" + "═"*60)
+            print("📖  LIVE TOC DEBUG PREVIEW")
+            print("═"*60)
+            for entry in hierarchy:
+                is_sub = entry.get("is_subtopic", False)
+                indent = "    " if is_sub else ""
+                icon = "└── 📑" if is_sub else "⭐"
+                
+                unit_info = f"[{entry['unit_name']}] " if entry.get("unit_name") else ""
+                ch_id = entry.get("chapter_id", "?")
+                name = entry.get("chapter_name", "Unknown")
+                p_range = f"p.{entry.get('start_page', '?')}"
+                if entry.get("end_page"):
+                    p_range += f"-{entry.get('end_page')}"
+                
+                print(f"{indent}{icon} {unit_info}Ch {ch_id}: {name} ({p_range})")
+            print("═"*60 + "\n")
+        else:
+            logger.warning("📭 TOC Hierarchy is empty. Check your TOC pages or regex patterns.")
 
         # --- PHASE 3: DEEP EXTRACTION ---
         logger.info(f"🎓 Step 3: Starting Deep Extraction...")
@@ -157,11 +191,12 @@ def run_pipeline(pdf_name, config: ProjectConfig):
         save_data()
         sync_all_to_cloud()
 
-    except (Exception, KeyboardInterrupt):
+    except (Exception, KeyboardInterrupt) as e:
         save_data()
         sync_all_to_cloud()
-        logger.error("🛑 Pipeline terminated. Final assets synced to Drive.")
 
+        logger.error(f"💥 FATAL PIPELINE ERROR: {str(e)}")
+        logger.error("🛑 Pipeline terminated. Final assets synced to Drive.")
         logger.info(f":sparkles: Pipeline Complete. Total Blocks: {state['total_blocks']}")
 
     except KeyboardInterrupt:
@@ -182,7 +217,7 @@ def run_pipeline(pdf_name, config: ProjectConfig):
 
 def main():
     cfg = ProjectConfig()
-    run_pipeline(pdf_name="ncert10M_8p", config=cfg)
+    run_pipeline(pdf_name="Class10 - Maths_10p", config=cfg)
 
 if __name__ == "__main__":
     main()

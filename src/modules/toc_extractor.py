@@ -18,13 +18,14 @@ from surya.foundation import FoundationPredictor
 
 from loaders.model_loader import ModelLoader
 from loaders.pdf_loader import PDFLoader
-
 from processing.logger import logger, setup_logger
+from processing.toc_patterns import patch_toc_processor
 
 from config import ProjectConfig
 
+
 class TOCProcessorAPI:
-    def __init__(self, ocr_engine=None):
+    def __init__(self, ocr_engine=None, models = None):
         # Auto-detect hardware
         device = "cuda" if torch.cuda.is_available() else "cpu"
         os.environ["SURYA_DEVICE"] = device
@@ -99,7 +100,7 @@ class TOCProcessorAPI:
         text = re.sub(r'\s{2,}', ' ', text)
         return text.strip()
 
-    def run_api(self, toc_images, debug=False, model="surya"):
+    def run_api(self, toc_images, debug=True, model="surya"):
         print(f"\n:book: [TOC_PROCESS] Extracting structure using {model.upper()}...")
         raw_output = []
         debug_frames = []
@@ -115,9 +116,12 @@ class TOCProcessorAPI:
             elements_to_group = []
 
             if model == "surya":
+                print("      🔎 Running Surya OCR...")
                 line_predictions = self.recognition_predictor([img_padded], det_predictor=self.detection_predictor)[0]
                 elements_to_group = line_predictions.text_lines
                 print(f"      :white_check_mark: Surya found {len(elements_to_group)} elements.")
+                print(f"      🔍 RAW ELEMENTS: {[e.text for e in elements_to_group]}")  # ← ADD HERE
+                print(f"      🔍 RAW ELEMENTS WITH COORDS: {[(e.text, e.bbox) for e in elements_to_group]}")
 
             elif model == "easy":
                 results = self.easyocr_reader.readtext(np.array(img_padded))
@@ -138,14 +142,13 @@ class TOCProcessorAPI:
                     m.text = text
                     elements_to_group.append(m)
                 print(f"      :white_check_mark: EasyOCR found {len(elements_to_group)} elements.")
-
+                print(f"      🔍 RAW ELEMENTS: {[e.text for e in elements_to_group]}")
             if debug:
-                # Create a copy of the ORIGINAL (unpadded) image
+                # Create a copy to draw on so we don't mess up the original for OCR
                 draw_img = img.copy()
                 draw = ImageDraw.Draw(draw_img)
-                
                 # The padding we added earlier
-                LEFT_PAD = 50 
+                LEFT_PAD = 50
                 TOP_PAD = 0
 
                 for el in elements_to_group:
@@ -157,11 +160,14 @@ class TOCProcessorAPI:
                         el.bbox[3] - TOP_PAD   # ymax
                     ]
                     draw.rectangle(orig_bbox, outline="red", width=3)
-                
+
                 debug_frames.append(draw_img)
 
             grouped_lines = self._spatial_grouping(elements_to_group)
-            raw_output.append({"lines": grouped_lines})
+            print(f"      🔍 BBOX TYPE: {type(elements_to_group[0].bbox)}, VALUE: {elements_to_group[0].bbox}")
+            # raw_output.append({"lines": grouped_lines})
+            raw_output.append({"lines": grouped_lines, "elements": elements_to_group})
+
 
         structured_results = self.transform_logic(raw_output)
         return structured_results, debug_frames
@@ -279,29 +285,41 @@ def run_standalone_toc(pdf_filename, page_list=None):
     for p in page_list:
         images.append(loader.load_page(p))
 
-    # Run API - Unpack the two return values here
+    # Run API
     api = TOCProcessorAPI()
-    data_results, debug_images = api.run_api(images, debug=ProjectConfig.DEBUG_MODE, model="surya")
+    patch_toc_processor(api)
+    results , debug_images  = api.run_api(images, debug=ProjectConfig.DEBUG_MODE, model="surya",)
 
-    # Final Export: Save ONLY the data_results to JSON
+    # Final Export
     with open(json_out, "w", encoding="utf-8") as f:
-        json.dump(data_results, f, indent=4, ensure_ascii=False)
+        json.dump(results, f, indent=4, ensure_ascii=False)
 
-    # (Optional) Save the debug images if they exist
     if debug_images:
         debug_path = os.path.join(output_dir, "debug_plots")
         os.makedirs(debug_path, exist_ok=True)
         for idx, img in enumerate(debug_images):
             img.save(f"{debug_path}/{pdf_filename}_page_{idx+1}.png")
         print(f":frame_with_picture: Debug images saved to: {debug_path}")
+   
 
     loader.close()
-    print(f"\n:white_check_mark: SUCCESS: {len(data_results)} Chapters extracted.")
+  
+    chapters  = [e for e in results if not e.get("is_subtopic")]
+    subtopics = [e for e in results if e.get("is_subtopic")]
+    units     = list({e["unit_id"] for e in results if e.get("unit_id") is not None})
+
+    parts = [f"{len(chapters)} Chapters"]
+    if units:
+        parts.insert(0, f"{len(units)} Units")
+    if subtopics:
+        parts.append(f"{len(subtopics)} Subtopics")
+
+    print(f"\n:white_check_mark: SUCCESS: {', '.join(parts)} extracted.")
     print(f":floppy_disk: File saved to: {json_out}")
 
 if __name__ == "__main__":
     # SETTINGS:
-    FILENAME = "TN_Class_8_Mathematics_TOC"       # The .pdf name in your input folder
+    FILENAME = "CG_C10_Math_TOC"       # The .pdf name in your input folder
     PAGES = None         # Set to None if your PDF is already cropped to TOC only
 
     run_standalone_toc(FILENAME, page_list=PAGES)

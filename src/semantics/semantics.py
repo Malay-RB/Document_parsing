@@ -23,6 +23,10 @@ class SemanticClassifier:
 
         cleaned = self.clean_text(text)
 
+        # 🎯 Ensure the layout engine's label takes priority
+        if layout_label in ["Caption", "FigureCaption"]:
+            return {"role": "CAPTION", "clean_text": cleaned}
+
         if layout_label == "SectionHeader":
             return {"role": "SECTION", "clean_text": cleaned}
 
@@ -36,12 +40,12 @@ class SemanticClassifier:
                     "clean_text": cleaned
                 }
 
-        # 2. MATH/EQUATION DETECTION
-        if "\\" in cleaned or any(op in cleaned for op in ["^", "_", "{", "}"]):
-            return {
-                "role": "EQUATION",
-                "clean_text": cleaned
-            }
+        # # 2. MATH/EQUATION DETECTION
+        # if "\\" in cleaned or any(op in cleaned for op in ["^", "_", "{", "}"]):
+        #     return {
+        #         "role": "EQUATION",
+        #         "clean_text": cleaned
+        #     }
 
         # 3. Chapter Pattern
         if SEMANTIC_PATTERNS["CHAPTER"].search(cleaned):
@@ -52,7 +56,7 @@ class SemanticClassifier:
             
 
         # 6. DEFAULT
-        return {"role": "BODY", "clean_text": cleaned}
+        return {"role": "TEXT", "clean_text": cleaned}
     
     def clean_latex_ocr_noise(self, text):
         if not text: 
@@ -150,6 +154,8 @@ def transform_structure(process_output, block_index=0, id_map = None):
         "unit_name": toc.get("unit_name"),
         "chapter_id": toc.get("chapter_id"),
         "chapter_name": toc.get("chapter_name"),
+        "subtopic_id": toc.get("subtopic_id"),
+        "subtopic_name": toc.get("chapter_name") if toc.get("is_subtopic") else None,
         "section_id": process_output.get("section_id"),
         "parent_section_block_id": process_output.get("parent_section_block_id"),
         "page_number": process_output.get("printed_page"),
@@ -158,7 +164,7 @@ def transform_structure(process_output, block_index=0, id_map = None):
         "content_type": content_type, # This will now be 'equation', 'chapter', 'body', etc.
         "text": process_output.get("text", ""),
         "nearby_content_ids": global_ids,
-        "image": process_output.get("figure_path")
+        "asset": process_output.get("asset")
     }
     
     return transformed

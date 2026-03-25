@@ -27,8 +27,10 @@ class ProjectConfig:
     EXTRACTION_MODEL = "easy"
     SCOUT_LIMIT = 15
     PDF_SCALE = 3.5
-    PG_NO_STRATEGY = "HEADER"
+    PG_NO_STRATEGY = "FOOTER"
     DEBUG_MODE = True
+
+    ENABLE_YAML_EXPORT  = False
 
     # ------Drive Upload------
     ENABLE_DRIVE_SYNC = False
@@ -43,6 +45,7 @@ class ProjectConfig:
     def __init__(self):
         # Automatically detect if we are running via Pytest
         self.is_pytest = "pytest" in sys.modules or "PYTEST_CURRENT_TEST" in os.environ
+        
 
     def get_active_paths(self, force_prod=False):
         if self.is_pytest:

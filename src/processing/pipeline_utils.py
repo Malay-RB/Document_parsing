@@ -77,7 +77,7 @@ def run_scout_phase(image, boxes, ocr_engine, model, page_no, width, height):
     # INFO: We want to see the header of every scouted page in the main log
     logger.info(f"📄 [Scout Page {page_no}] Header: '{header_text}'")
 
-    triggers = ["content", "contents", "index"]
+    triggers = ["content", "contents", "index", "Table of content", "Table of content"]
     
     if any(keyword in header_text for keyword in triggers):
         # INFO: Major milestone for the pipeline
@@ -127,20 +127,20 @@ def extract_page_block(image, box, safe_coord, models, ocr_engine, ocr_type, box
     group = LABEL_MAP.get(box.label, "TEXT")
     logger.info(f"DEBUG: Processing Block. Label='{box.label}', Assigned Group='{group}'") 
 
-    # 2. CAPTION HANDLING (Rule: Parent search ignores standalone Captions)
-    if group == "CAPTION":
-        logger.debug(f"⏩ Standalone Caption at index {current_idx} ignored (handled by Visual Sweep).")
-        return "[SKIP_STANDALONE_CAPTION]"
+    # # 2. CAPTION HANDLING (Rule: Parent search ignores standalone Captions)
+    # if group == "CAPTION":
+    #     logger.debug(f"⏩ Standalone Caption at index {current_idx} ignored (handled by Visual Sweep).")
+    #     return "[SKIP_STANDALONE_CAPTION]"
     
 
     # 3. Visual and Table handling 
     if group == "VISUAL":
         logger.info(f"🖼️ Visual Block Detected [{box.label}]: Skipping OCR.")
-        return "[FIGURE_OR_IMAGE_BLOCK]"
+        return ""
 
     if group == "TABLE":
         logger.info("📊 Table Block Detected: Skipping standard OCR.")
-        return "[TABLE_BLOCK]"
+        return ""
     
     if x2 <= x1 or y2 <= y1:
         logger.warning(f"⚠️ Skipping zero-area block at {safe_coord}")
