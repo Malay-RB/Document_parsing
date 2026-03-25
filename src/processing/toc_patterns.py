@@ -370,10 +370,22 @@ def robust_transform_logic(self, raw_pages: list) -> list:
 
     # ── back-fill end pages ──────────────────────────────────────────────────
     for i in range(len(structured_data) - 1):
-        if structured_data[i]["end_page"] is None:
-            next_start = structured_data[i + 1]["start_page"]
-            if next_start:
-                structured_data[i]["end_page"] = next_start - 1
+            if structured_data[i]["end_page"] is None:
+                current_is_subtopic = structured_data[i].get("is_subtopic", False)
+
+                if current_is_subtopic:
+                    # Subtopic end = next entry start - 1 (whether chapter or subtopic)
+                    next_start = structured_data[i + 1]["start_page"]
+                    if next_start:
+                        structured_data[i]["end_page"] = next_start - 1
+                else:
+                    # Chapter end = next CHAPTER start - 1 (skip subtopics)
+                    for j in range(i + 1, len(structured_data)):
+                        if not structured_data[j].get("is_subtopic", False):
+                            next_ch_start = structured_data[j]["start_page"]
+                            if next_ch_start:
+                                structured_data[i]["end_page"] = next_ch_start - 1
+                            break
     
     return structured_data
     
