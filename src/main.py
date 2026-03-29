@@ -14,6 +14,7 @@ from modules.extract import run_deep_extraction
 from exporters.drive_upload import upload_to_drive  # Ensure correct import path
 from config import ProjectConfig
 from modules.yaml_exporter import convert_json_to_yaml
+from processing.toc_patterns import patch_toc_processor
 
 def format_runtime(seconds: float) -> str:
     seconds = int(seconds)
@@ -103,16 +104,21 @@ def run_pipeline(pdf_name, config: ProjectConfig):
         # --- PHASE 1 & 2: SCOUT & SYNC ---
         sync_results = run_scout_sync(pdf_name=pdf_name, models=shared_models, config=config, force_prod=True)
         
-        hierarchy = sync_results.get("hierarchy", []) if sync_results else []
-
-        physical_start = sync_results.get("content_start_page") if sync_results else None
-        toc_pages = sync_results.get("toc_pages", [])
+        if sync_results:
+            hierarchy = sync_results.get("hierarchy", [])
+            physical_start = sync_results.get("content_start_page")
+            toc_pages = sync_results.get("toc_pages", [])
+        else:
+            logger.error("🛑 Scout/Sync failed to return any results. Pipeline cannot proceed.")
+            return
 
         # --- ANCHOR FALLBACK ---
         if not physical_start:
             logger.warning("⚠️ Anchor missing. Running 5-page window fallback.")
             scan_start = toc_pages[0] if toc_pages else 1
             fallback_range = list(range(scan_start, scan_start + 5))
+
+            logger.info(f"📂 Fallback: Extracting TOC from pages {fallback_range}")
             
             loader = PDFLoader(scale=config.PDF_SCALE)
             loader.open(full_pdf_path)
@@ -121,6 +127,7 @@ def run_pipeline(pdf_name, config: ProjectConfig):
             fallback_imgs = [loader.load_page(p) for p in valid_range]
             
             toc_api = TOCProcessorAPI(models=shared_models)
+            patch_toc_processor(toc_api)
             hierarchy, _ = toc_api.run_api(fallback_imgs, debug=debug_mode, model="surya")
             loader.close()
 
@@ -217,7 +224,7 @@ def run_pipeline(pdf_name, config: ProjectConfig):
 
 def main():
     cfg = ProjectConfig()
-    run_pipeline(pdf_name="ncert10M_20p", config=cfg)
+    run_pipeline(pdf_name="CG_Class-6-Mathematics_10p", config=cfg)
 
 if __name__ == "__main__":
     main()

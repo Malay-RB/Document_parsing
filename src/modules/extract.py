@@ -285,6 +285,11 @@ def run_deep_extraction(pdf_filename, input_path=None, output_path=None, start_p
     pdf_path = os.path.join(final_in, f"{pdf_filename}.pdf")
     strategy = pg_no_strategy if pg_no_strategy else cfg.PG_NO_STRATEGY
 
+    # 🎯 NEW: Create a book-specific subfolder for visuals
+    book_visuals_dir = os.path.join(auto_out, "extracted_visuals", pdf_filename)
+    os.makedirs(book_visuals_dir, exist_ok=True)
+    logger.info(f"📂 Organized visuals will be saved to: {book_visuals_dir}")
+
     # Debug PDF Paths
     debug_dir = os.path.join(auto_out, "debug_visuals")
     os.makedirs(debug_dir, exist_ok=True)
@@ -316,7 +321,8 @@ def run_deep_extraction(pdf_filename, input_path=None, output_path=None, start_p
         detection_predictor=models.detection_predictor,
         rapid_text_engine=models.rapid_text_engine,
         rapid_latex_engine=models.rapid_latex_engine,
-        easyocr_reader=models.easyocr_reader
+        easyocr_reader=models.easyocr_reader,
+        
     )
     
     tracker = PageNumberTracker()
@@ -339,7 +345,7 @@ def run_deep_extraction(pdf_filename, input_path=None, output_path=None, start_p
             # Unpack the 3rd return value (debug_img)
             current_page_blocks, is_ready, debug_img = run_single_page(
                 image, page_no, models, layout_engine, ocr_engine, 
-                classifier, strategy, tracker, hierarchy, context_tracker=context_tracker
+                classifier, strategy, tracker, hierarchy, context_tracker=context_tracker, visuals_dir = book_visuals_dir
             )
 
             # Append to Registry for the Coord JSON
