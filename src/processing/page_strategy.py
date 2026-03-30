@@ -24,8 +24,8 @@ def _extract_page_val(p_text, classifier, context_label):
     return None
 
 def _detect_from_header(image, boxes, safe_coords, ocr_engine, classifier, ocr_type, height):
-    # Check first 8 boxes 
-    for i, box in enumerate(boxes[:8]):
+    # Check first 3 boxes 
+    for i, box in enumerate(boxes[:3]):
         label = getattr(box, 'label', None) 
         if label is None and isinstance(box, dict):
             label = box.get('label')
@@ -48,10 +48,10 @@ def _detect_from_header(image, boxes, safe_coords, ocr_engine, classifier, ocr_t
 
 def _detect_from_footer(image, boxes, safe_coords, ocr_engine, classifier, ocr_type, height):
     # DEBUG: Diagnostic info for footers
-    logger.debug("🔍 Checking Footer: Targeting last 2 blocks.")
+    logger.debug("🔍 Checking Footer: Targeting last 3 blocks.")
     
     total_boxes = len(boxes)
-    start_idx = max(0, total_boxes - 2)
+    start_idx = max(0, total_boxes - 3)
 
     for idx in range(start_idx, total_boxes):
         box = boxes[idx]

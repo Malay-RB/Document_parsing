@@ -134,27 +134,27 @@ def run_pipeline(pdf_name, config: ProjectConfig):
             physical_start = scan_start + 5
             logger.info(f"🎯 Fallback set. Starting Deep Extraction at Page {physical_start}")
 
-        # --- 🎯 TOC DEBUG PRINT BLOCK ---
-        if hierarchy:
-            print("\n" + "═"*60)
-            print("📖  LIVE TOC DEBUG PREVIEW")
-            print("═"*60)
-            for entry in hierarchy:
-                is_sub = entry.get("is_subtopic", False)
-                indent = "    " if is_sub else ""
-                icon = "└── 📑" if is_sub else "⭐"
+        # # --- 🎯 TOC DEBUG PRINT BLOCK ---
+        # if hierarchy:
+        #     print("\n" + "═"*60)
+        #     print("📖  LIVE TOC DEBUG PREVIEW")
+        #     print("═"*60)
+        #     for entry in hierarchy:
+        #         is_sub = entry.get("is_subtopic", False)
+        #         indent = "    " if is_sub else ""
+        #         icon = "└── 📑" if is_sub else "⭐"
                 
-                unit_info = f"[{entry['unit_name']}] " if entry.get("unit_name") else ""
-                ch_id = entry.get("chapter_id", "?")
-                name = entry.get("chapter_name", "Unknown")
-                p_range = f"p.{entry.get('start_page', '?')}"
-                if entry.get("end_page"):
-                    p_range += f"-{entry.get('end_page')}"
+        #         unit_info = f"[{entry['unit_name']}] " if entry.get("unit_name") else ""
+        #         ch_id = entry.get("chapter_id", "?")
+        #         name = entry.get("chapter_name", "Unknown")
+        #         p_range = f"p.{entry.get('start_page', '?')}"
+        #         if entry.get("end_page"):
+        #             p_range += f"-{entry.get('end_page')}"
                 
-                print(f"{indent}{icon} {unit_info}Ch {ch_id}: {name} ({p_range})")
-            print("═"*60 + "\n")
-        else:
-            logger.warning("📭 TOC Hierarchy is empty. Check your TOC pages or regex patterns.")
+        #         print(f"{indent}{icon} {unit_info}Ch {ch_id}: {name} ({p_range})")
+        #     print("═"*60 + "\n")
+        # else:
+        #     logger.warning("📭 TOC Hierarchy is empty. Check your TOC pages or regex patterns.")
 
         # --- PHASE 3: DEEP EXTRACTION ---
         logger.info(f"🎓 Step 3: Starting Deep Extraction...")

@@ -1,22 +1,4 @@
 """
-toc_patterns.py  — Drop-in extension for TOCProcessorAPI
-=========================================================
-Import this module and call `patch_toc_processor(api_instance)` after creating
-your TOCProcessorAPI object, OR use TOCPatternMixin as a mixin.
-
-NO changes are required to your existing toc_extractor.py.
-
-Supports all patterns:
-  • Numbered chapters   (1, 2, 3 …)
-  • Roman-numeral chapters (I, II, III … / i, ii, iii …)
-  • Unnumbered / word chapters  ("Chapter One", "Chapter Two" …)
-  • With or without units
-  • With or without subtopics (1.1, 1.2 …)
-  • Page ranges  (12 – 34)
-  • Trailing junk after page numbers (marks, periods, percentages …)
-  • Various column layouts (#1 – #8 from the spec)
-  • Table-style TOCs (Unit | Chapter | Page columns)
-
 Usage A – monkey-patch an existing instance
 --------------------------------------------
     from toc_patterns import patch_toc_processor
@@ -67,10 +49,7 @@ def roman_to_int(s: str) -> Optional[int]:
             i += 1
     return val if val > 0 else None
 
-
-# ─────────────────────────────────────────────────────────────────────────────
 # WORD-NUMBER UTILITIES
-# ─────────────────────────────────────────────────────────────────────────────
 
 _WORD_NUMS = {
     "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
@@ -83,18 +62,27 @@ _WORD_NUMS = {
 def word_to_int(s: str) -> Optional[int]:
     return _WORD_NUMS.get(s.strip().lower())
 
-
-# ─────────────────────────────────────────────────────────────────────────────
 # COMPILED PATTERNS  (all used inside the patched transform_logic)
-# ─────────────────────────────────────────────────────────────────────────────
 
 # --- Chapter / section ID patterns ---
 
-# Arabic:  "3." or "3 " at start
-_ARABIC_ID    = re.compile(r"^(\d+)\.?\s+")
+# Indian:  "3." or "3 " at start
+_Indian_ID    = re.compile(r"^(\d+)\.?\s+")
 
 # Subtopic: "3.1" or "3.1.2" (must NOT be a plain float like 3.14)
 _SUBTOPIC_ID  = re.compile(r"^(\d+)\.(\d+)(?:\.(\d+))?\s+")
+
+# Roman subtopic: "I.1" or "II.3" or "i.ii" at start
+_ROMAN_SUBTOPIC_ID = re.compile(
+    r"^([IVXLCDM]+)\.([IVXLCDM]+|\d+)\s+",
+    re.IGNORECASE
+)
+
+# Unnumbered subtopic: "(a)" or "(i)" or "a." or "i." at start
+_UNNUMBERED_SUBTOPIC_ID = re.compile(
+    r"^(?:\(([a-z])\)|([a-z])\.)\s+",
+    re.IGNORECASE
+)
 
 # Roman:   "III." or "III " or "iii " at start
 _ROMAN_ID     = re.compile(r"^([IVXLCDM]+)\.?\s+", re.IGNORECASE)
@@ -145,12 +133,7 @@ _TABLE_ROW_CHAPTER_ONLY = re.compile(
 _TABLE_ROW_UNIT_ONLY = re.compile(
     r'^(\d+)\.\s+([A-Za-z][^\d]+?)\s*$'
 )
-
-
-# ─────────────────────────────────────────────────────────────────────────────
 # HELPERS
-# ─────────────────────────────────────────────────────────────────────────────
-
 def _extract_page_range(text: str):
     """Return (start_page, end_page, text_before_page) from a line."""
     # Range: grab the LAST occurrence of N–M
@@ -181,10 +164,7 @@ def _safe_sanitize(text: str) -> str:
     text = re.sub(r'[^\w\s\-\&\(\)\/]', '', text, flags=re.UNICODE)
     return re.sub(r'\s{2,}', ' ', text).strip()
 
-
-# ─────────────────────────────────────────────────────────────────────────────
 # TABLE-STYLE TOC PARSER
-# ─────────────────────────────────────────────────────────────────────────────
 
 def _parse_table_row(cleaned: str):
     """
@@ -258,16 +238,13 @@ def _parse_table_toc(all_lines: list) -> list:
 
     return structured_data
 
-
-# ─────────────────────────────────────────────────────────────────────────────
 # CORE ROBUST TRANSFORM LOGIC
-# ─────────────────────────────────────────────────────────────────────────────
 
 def robust_transform_logic(self, raw_pages: list) -> list:
     """
     Replacement for TOCProcessorAPI.transform_logic that handles all TOC patterns.
 
-    Detects the dominant chapter-ID style (arabic / roman / word) on the first
+    Detects the dominant chapter-ID style (Indian / roman / word) on the first
     pass and then uses the matching extractor.  Falls back gracefully if the
     style cannot be determined.
     """
@@ -278,7 +255,7 @@ def robust_transform_logic(self, raw_pages: list) -> list:
     for page in raw_pages:
         lines = page.get("lines", [])
         merged = _merge_floating_page_numbers(lines)
-        merged = _merge_two_line_chapters(merged)   # ← handles "Chapter 1\nName pg" format
+        merged = _merge_two_line_chapters(merged)
         all_lines.extend(merged)
 
     # ── detect dominant ID style ─────────────────────────────────────────────
@@ -298,8 +275,8 @@ def robust_transform_logic(self, raw_pages: list) -> list:
     structured_data = []
     active_unit_id   = None
     active_unit_name = None
-    last_chapter_int = 0   # always keep as integer for jump-check
-    subtopic_counters = {}  # {chapter_int: count} for 1.1, 1.2 ...
+    last_chapter_int = 0
+    subtopic_counters = {}
 
     for line in all_lines:
         if self.is_header_or_footer(line):
@@ -307,14 +284,14 @@ def robust_transform_logic(self, raw_pages: list) -> list:
         cleaned = self.clean_text(line)
         if not cleaned or len(cleaned) < self.min_line_length:
             continue
-        # print(f"      🔍 ALL LINES: {all_lines}")  #****  
-        # ── Unit-header-only lines (no chapter number on same line) ────── 
+
+        # ── Unit-header-only lines (no chapter number on same line) ──────
         unit_m = _UNIT_HEADER.match(cleaned)
         if unit_m and not _has_chapter_after_unit(cleaned):
             uid_raw = unit_m.group(1)
-            uid_int = (_to_int(uid_raw, "arabic") or 
-                    _to_int(uid_raw, "roman") or 
-                    _to_int(uid_raw, "word"))
+            uid_int = (_to_int(uid_raw, "Indian") or
+                       _to_int(uid_raw, "roman") or
+                       _to_int(uid_raw, "word"))
             active_unit_id   = uid_int
             active_unit_name = _safe_sanitize(unit_m.group(2) or "")
             print(f"      📦 Unit: {active_unit_id} – {active_unit_name}")
@@ -322,6 +299,66 @@ def robust_transform_logic(self, raw_pages: list) -> list:
 
         # ── Attempt to parse as a structured entry ───────────────────────
         entry = _parse_line(cleaned, id_style, last_chapter_int, self.max_chapter_jump)
+
+        # ── Fallback: horizontal subtopics (comma-separated on one line) ──
+        # e.g. "Introduction, Sets and their Representations, The Empty Set 5"
+        if entry is None and last_chapter_int > 0 and ',' in cleaned:
+            parts = [p.strip() for p in cleaned.split(',')]
+            if len(parts) >= 3:
+                print(f"      📋 Horizontal subtopics detected for Ch {last_chapter_int}")
+                for part in parts:
+                    part = part.strip().rstrip('.')
+                    if not part:
+                        continue
+                    start_p, end_p, name_raw = _extract_page_range(part)
+                    name = _safe_sanitize(_strip_trailing_junk(name_raw))
+                    if not name or len(name) < 3:
+                        continue
+                    # Skip if it looks like an author name (all caps)
+                    if re.match(r'^[A-Z][A-Z\s\.]+$', name):
+                        continue
+                    subtopic_counters[last_chapter_int] = subtopic_counters.get(last_chapter_int, 0) + 1
+                    sub_id = f"{last_chapter_int}.{subtopic_counters[last_chapter_int]}"
+                    entry_dict = {
+                        "unit_id":       active_unit_id,
+                        "unit_name":     active_unit_name,
+                        "chapter_id":    last_chapter_int,
+                        "chapter_name":  structured_data[-1]["chapter_name"] if structured_data else None,
+                        "start_page":    start_p,
+                        "end_page":      end_p,
+                        "is_subtopic":   True,
+                        "subtopic_id":   sub_id,
+                        "subtopic_name": name,
+                    }
+                    print(f"        ↳ Subtopic {sub_id} – {name} [Page: {start_p}]")
+                    structured_data.append(entry_dict)
+            continue
+
+        # ── Fallback: unnumbered subtopic detection ───────────────────────
+        # A line with no chapter number but has a page number,
+        # appearing after a chapter — treat as subtopic
+        if entry is None and last_chapter_int > 0:
+            start_p, end_p, name_raw = _extract_page_range(cleaned)
+            name = _safe_sanitize(_strip_trailing_junk(name_raw))
+            if start_p is not None and name and len(name) > 3:
+                if not name.isupper() and not re.match(r'^[A-Z][A-Z\s\.]+$', name):
+                    subtopic_counters[last_chapter_int] = subtopic_counters.get(last_chapter_int, 0) + 1
+                    sub_id = f"{last_chapter_int}.{subtopic_counters[last_chapter_int]}"
+                    entry_dict = {
+                        "unit_id":       active_unit_id,
+                        "unit_name":     active_unit_name,
+                        "chapter_id":    last_chapter_int,
+                        "chapter_name":  structured_data[-1]["chapter_name"] if structured_data else None,
+                        "start_page":    start_p,
+                        "end_page":      end_p,
+                        "is_subtopic":   True,
+                        "subtopic_id":   sub_id,
+                        "subtopic_name": name,
+                    }
+                    print(f"        ↳ Subtopic {sub_id} – {name} [Page: {start_p}]")
+                    structured_data.append(entry_dict)
+            continue
+
         if entry is None:
             continue
 
@@ -353,9 +390,8 @@ def robust_transform_logic(self, raw_pages: list) -> list:
             else:
                 subtopic_counters[ch_int] = subtopic_counters.get(ch_int, 0) + 1
                 subtopic_id = f"{ch_int}.{subtopic_counters[ch_int]}"
-
-            entry_dict["is_subtopic"] = True
-            entry_dict["subtopic_id"] = subtopic_id
+            entry_dict["is_subtopic"]   = True
+            entry_dict["subtopic_id"]   = subtopic_id
             entry_dict["subtopic_name"] = ch_name
 
         display_id = entry_dict.get("subtopic_id", ch_int) if is_subtopic else ch_int
@@ -370,30 +406,14 @@ def robust_transform_logic(self, raw_pages: list) -> list:
 
     # ── back-fill end pages ──────────────────────────────────────────────────
     for i in range(len(structured_data) - 1):
-            if structured_data[i]["end_page"] is None:
-                current_is_subtopic = structured_data[i].get("is_subtopic", False)
+        if structured_data[i]["end_page"] is None:
+            next_start = structured_data[i + 1]["start_page"]
+            if next_start:
+                structured_data[i]["end_page"] = next_start - 1
 
-                if current_is_subtopic:
-                    # Subtopic end = next entry start - 1 (whether chapter or subtopic)
-                    next_start = structured_data[i + 1]["start_page"]
-                    if next_start:
-                        structured_data[i]["end_page"] = next_start - 1
-                else:
-                    # Chapter end = next CHAPTER start - 1 (skip subtopics)
-                    for j in range(i + 1, len(structured_data)):
-                        if not structured_data[j].get("is_subtopic", False):
-                            next_ch_start = structured_data[j]["start_page"]
-                            if next_ch_start:
-                                structured_data[i]["end_page"] = next_ch_start - 1
-                            break
-    
     return structured_data
     
-
-
-# ─────────────────────────────────────────────────────────────────────────────
 # INTERNAL HELPERS
-# ─────────────────────────────────────────────────────────────────────────────
 
 def _merge_floating_page_numbers(lines: list) -> list:
     """Same logic as the original but extracted for reuse."""
@@ -416,15 +436,7 @@ def _strip_html(text: str) -> str:
 
 
 def _merge_two_line_chapters(lines: list) -> list:
-    """
-    Handles TOCs where the chapter label and chapter name are on separate lines:
 
-        <b>Chapter 1</b>          ← standalone label line (possibly with HTML tags)
-        Large Numbers Around Us 1 ← name + page on next line
-
-    Merges them into a single line:
-        Chapter 1 Large Numbers Around Us 1
-    """
     merged = []
     i = 0
     while i < len(lines):
@@ -459,27 +471,27 @@ def _merge_two_line_chapters(lines: list) -> list:
 def _detect_id_style(lines: list) -> str:
     """
     Scan lines and vote on the predominant chapter-ID style.
-    Returns: 'arabic' | 'roman' | 'word'
+    Returns: 'Indian' | 'roman' | 'word'
     """
-    votes = {"arabic": 0, "roman": 0, "word": 0}
+    votes = {"Indian": 0, "roman": 0, "word": 0}
     for line in lines:
         line = line.strip()
-        if _SUBTOPIC_ID.match(line) or _ARABIC_ID.match(line):
-            votes["arabic"] += 1
+        if _SUBTOPIC_ID.match(line) or _Indian_ID.match(line):
+            votes["Indian"] += 1
         elif _WORD_CH_ID.match(line):
             votes["word"] += 1
         elif _ROMAN_ID.match(line):
             tok = line.split()[0].rstrip(".")
             if roman_to_int(tok) is not None:
                 votes["roman"] += 1
-    # arabic wins ties (most common)
-    return max(votes, key=lambda k: (votes[k], k == "arabic"))
+    # Indian wins ties (most common)
+    return max(votes, key=lambda k: (votes[k], k == "Indian"))
 
 
 def _to_int(token: str, style: str) -> Optional[int]:
     """Convert a token to integer given the style."""
     token = token.strip()
-    if style == "arabic":
+    if style == "Indian":
         return int(token) if token.isdigit() else None
     if style == "roman":
         return roman_to_int(token)
@@ -512,7 +524,31 @@ def _parse_line(
     Try to parse a single cleaned line into (ch_int, ch_name, start_p, end_p, is_subtopic).
     Returns None if the line does not match any known pattern.
     """
+        # ── 0. Roman subtopic: "I.1" or "II.3" ──────────────────────────────
+    rom_sub_m = _ROMAN_SUBTOPIC_ID.match(cleaned)
+    if rom_sub_m:
+        parent_raw = rom_sub_m.group(1)
+        parent_id  = roman_to_int(parent_raw) or 0
+        sub_id_str = rom_sub_m.group(1) + "." + rom_sub_m.group(2)
+        rest = cleaned[rom_sub_m.end():]
+        start_p, end_p, name_raw = _extract_page_range(rest)
+        name = _safe_sanitize(_strip_trailing_junk(name_raw))
+        if not name:
+            return None
+        return (parent_id, name, start_p, end_p, True, sub_id_str)
 
+    # ── 0b. Unnumbered subtopic: "(a)" or "a." ───────────────────────────
+    unnum_m = _UNNUMBERED_SUBTOPIC_ID.match(cleaned)
+    if unnum_m:
+        label = (unnum_m.group(1) or unnum_m.group(2)).lower()
+        # Convert letter to number: a=1, b=2 etc
+        sub_int = ord(label) - ord('a') + 1
+        rest = cleaned[unnum_m.end():]
+        start_p, end_p, name_raw = _extract_page_range(rest)
+        name = _safe_sanitize(_strip_trailing_junk(name_raw))
+        if not name:
+            return None
+        return (sub_int, name, start_p, end_p, True, label)
     # ── 1. Subtopic pattern:  "1.1" or "1.1.2" ───────────────────────────
     sub_m = _SUBTOPIC_ID.match(cleaned)
     if sub_m:
@@ -529,9 +565,9 @@ def _parse_line(
         # Use parent chapter id as integer, store dotted string separately
         return (parent_id, name, start_p, end_p, True, sub_id_str)
 
-    # ── 2. Arabic chapter: "3 Chapter Name  45" ──────────────────────────
-    if id_style == "arabic":
-        m = _ARABIC_ID.match(cleaned)
+    # ── 2. Indian chapter: "3 Chapter Name  45" ──────────────────────────
+    if id_style == "Indian":
+        m = _Indian_ID.match(cleaned)
         if not m:
             return None
         ch_int = int(m.group(1))
@@ -584,7 +620,7 @@ def _parse_line(
             print(f"      ⚠️  Dropped (empty name after sanitize): [{cleaned}] → rest=[{rest}] name_raw=[{name_raw}]")
             return None
         return (ch_int, name, start_p, end_p, False, None)
-
+    
     return None
 
 
@@ -602,29 +638,13 @@ def _jump_ok(ch_int: int, last: int, max_jump: int) -> bool:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def patch_toc_processor(api_instance):
-    """
-    Monkey-patch an existing TOCProcessorAPI instance so that
-    transform_logic uses the robust multi-pattern implementation.
-
-    Call this immediately after creating your api object:
-
-        api = TOCProcessorAPI()
-        patch_toc_processor(api)
-    """
+    
     import types
     api_instance.transform_logic = types.MethodType(robust_transform_logic, api_instance)
     print("✅ [toc_patterns] Robust transform_logic patched successfully.")
 
 
 class RobustTOCProcessor:
-    """
-    Convenience subclass: same as TOCProcessorAPI but uses robust_transform_logic
-    automatically.  Import and use instead of TOCProcessorAPI — zero other changes.
-
-    from toc_patterns import RobustTOCProcessor
-    api = RobustTOCProcessor()
-    results, frames = api.run_api(images)
-    """
 
     def __init_subclass__(cls, **kwargs):
         super().__init_subclass__(**kwargs)

@@ -92,7 +92,7 @@ def run_sync_phase(image, boxes, ocr_engine, model, target_anchor, height, width
         logger.error("❌ Sync Phase failed: target_anchor is None. TOC extraction likely failed.")
         return False
 
-    # Check first 3 boxes (top 30% of the page)
+    # Check first 3 boxes 
     for i, box in enumerate(boxes[:3]):
         if box.label in ["SectionHeader", "Text", "Title", "PageHeader"]:
             x1, y1, x2, y2 = map(int, box.bbox)
