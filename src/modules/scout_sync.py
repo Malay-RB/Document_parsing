@@ -115,8 +115,16 @@ def run_scout_sync(pdf_name, input_path=None, output_path=None, models=None, con
 
                     if probe_results:
                         state["hierarchy_data"] = probe_results
-                        state["target_anchor"] = probe_results[0]["chapter_name"].lower()
-                        logger.info(f"⚓ ANCHOR CAPTURED: '{state['target_anchor']}'")
+                        # state["target_anchor"] = probe_results[0]["chapter_name"].lower()
+                        chapter_name = probe_results[0].get("chapter_name")
+                        if chapter_name:
+                            state["target_anchor"] = chapter_name.lower()
+                            logger.info(f"⚓ ANCHOR CAPTURED: '{state['target_anchor']}'")
+                        else:
+                            logger.warning(f"⚠️ TOC found but chapter_name is None on Page {page_no}. Skipping anchor.")
+                            state["is_discovering_toc"] = False
+                            continue
+                        # logger.info(f"⚓ ANCHOR CAPTURED: '{state['target_anchor']}'")
                     else:
                         logger.warning(f"⚠️ Trigger found but TOC Probe failed on Page {page_no}.")
                         state["is_discovering_toc"] = False

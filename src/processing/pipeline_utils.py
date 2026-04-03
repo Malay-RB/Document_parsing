@@ -59,31 +59,62 @@ def run_internal_sweep(image, boxes, current_idx, ocr_engine, ocr_type):
 
 # --- MODIFIED FRAMEWORK FUNCTIONS ---
 
+# def run_scout_phase(image, boxes, ocr_engine, model, page_no, width, height):
+#     """Detects TOC triggers (Contents/Index) in the top-most box of a page."""
+#     # DEBUG: The model choice is a technical detail
+#     logger.debug(f"🔍 [Scout] Using '{model}' engine for Page {page_no}")
+    
+#     if not boxes: 
+#         return False, None
+    
+#     # We only scout the very first box (top of page)
+#     first_box = boxes[0]
+#     x1, y1, x2, y2 = map(int, first_box.bbox)
+#     crop = image.crop((max(0, x1-5), max(0, y1-5), min(width, x2+5), min(height, y2+5)))
+    
+#     header_text = ocr_engine.extract(crop, model=model).lower().strip()
+    
+#     # INFO: We want to see the header of every scouted page in the main log
+#     logger.info(f"📄 [Scout Page {page_no}] Header: '{header_text}'")
+
+#     triggers = ["content", "contents", "index", "Table of content", "Table of content"]
+    
+#     if any(keyword in header_text for keyword in triggers):
+#         # INFO: Major milestone for the pipeline
+#         logger.info(f"🎯 TRIGGER: '{header_text}' matches TOC keywords on Page {page_no}.")
+#         return True, header_text
+        
+#     return False, None
 def run_scout_phase(image, boxes, ocr_engine, model, page_no, width, height):
     """Detects TOC triggers (Contents/Index) in the top-most box of a page."""
-    # DEBUG: The model choice is a technical detail
     logger.debug(f"🔍 [Scout] Using '{model}' engine for Page {page_no}")
-    
-    if not boxes: 
+
+    if not boxes:
         return False, None
-    
+
     # We only scout the very first box (top of page)
     first_box = boxes[0]
     x1, y1, x2, y2 = map(int, first_box.bbox)
     crop = image.crop((max(0, x1-5), max(0, y1-5), min(width, x2+5), min(height, y2+5)))
-    
+
     header_text = ocr_engine.extract(crop, model=model).lower().strip()
-    
+
     # INFO: We want to see the header of every scouted page in the main log
     logger.info(f"📄 [Scout Page {page_no}] Header: '{header_text}'")
 
-    triggers = ["content", "contents", "index", "Table of content", "Table of content"]
-    
-    if any(keyword in header_text for keyword in triggers):
-        # INFO: Major milestone for the pipeline
-        logger.info(f"🎯 TRIGGER: '{header_text}' matches TOC keywords on Page {page_no}.")
-        return True, header_text
-        
+    # FIX: Use whole-word regex matching to avoid false triggers.
+    # e.g. "content" must not match "Content to them is irrelevant"
+    triggers = [
+        r"\bcontents?\b",           # "content" or "contents"
+        r"\bindex\b",
+        r"\btable\s+of\s+contents?\b",  # "table of content" or "table of contents"
+    ]
+
+    for pattern in triggers:
+        if re.search(pattern, header_text, re.IGNORECASE):
+            logger.info(f"🎯 TRIGGER: '{header_text}' matches TOC keywords on Page {page_no}.")
+            return True, header_text
+
     return False, None
 
 def run_sync_phase(image, boxes, ocr_engine, model, target_anchor, height, width):
