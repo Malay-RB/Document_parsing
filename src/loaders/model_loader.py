@@ -57,7 +57,7 @@ class ModelLoader:
         # --- EasyOCR (Crucial for GPU speed) ---
         print(f"📥 Loading EasyOCR ({device.upper()} mode)...")
         use_gpu = (device == "cuda")
-        self.easyocr_reader = easyocr.Reader(['en'], gpu=use_gpu)
+        self.easyocr_reader = easyocr.Reader(['hi','en'], gpu=use_gpu)
 
         self.initialized = True
         print(f"\n✅ All models ready on {device.upper()}.")

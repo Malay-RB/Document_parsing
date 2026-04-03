@@ -76,7 +76,8 @@ _ROMAN_ID = re.compile(r"^([IVXLCDM]+)\.?\s+", re.IGNORECASE)
 
 # Word-style chapter: "Chapter 1" / "Chapter1" (\\s* handles missing space)
 _WORD_CH_ID = re.compile(
-    r"^(?:chapter|unit|section|part)\s*(\d+|[a-z]+)\s*(?:[\.\:\-–])?\s*",
+    # r"^(?:chapter|unit|section|part)\s*(\d+|[a-z]+)\s*(?:[\.\:\-–])?\s*",
+    r"^(?:chapter|unit|section|part|अध्याय|इकाई|भाग|खंड)\s*(\d+|[a-z]+|\d+)\s*(?:[\.\:\-–])?\s*",
     re.IGNORECASE,
 )
 
@@ -90,19 +91,23 @@ _PAGE_SINGLE = re.compile(r'(?<!\d)(\d{1,4})\s*$')
 # Unit/theme header line (standalone, no chapter number)
 # FIX: added "theme" to keyword list
 _UNIT_HEADER = re.compile(
-    r"^(?:unit|section|part|theme)\s+(.+?)\s*[:\-–—]?\s*(.+)?$",
+    # r"^(?:unit|section|part|theme)\s+(.+?)\s*[:\-–—]?\s*(.+)?$",
+    r"^(?:unit|section|part|theme|इकाई|भाग|खंड|विषय)\s+(.+?)\s*[:\-–—]?\s*(.+)?$",
+
     re.IGNORECASE,
 )
 
 # "THEME A — India and the World…" style — letter ID + dash + name
 _THEME_HEADER = re.compile(
-    r"^(?:theme)\s+([A-Za-z])\s*[-–—]\s*(.+)$",
+    # r"^(?:theme)\s+([A-Za-z])\s*[-–—]\s*(.+)$",
+    r"^(?:theme|विषय)\s+([A-Za-z\u0900-\u097F])\s*[-–—]\s*(.+)$",
     re.IGNORECASE,
 )
 
 # Standalone chapter label with no name after it ("Chapter 1", "Chapter1")
 _STANDALONE_CH = re.compile(
-    r"^(?:chapter|unit|section|part)\s*(\d+|[IVXLCDM]+|[a-z]+)\s*$",
+    # r"^(?:chapter|unit|section|part)\s*(\d+|[IVXLCDM]+|[a-z]+)\s*$",
+    r"^(?:chapter|unit|section|part|अध्याय|इकाई|भाग|खंड)\s*(\d+|[IVXLCDM]+|[a-z]+)\s*$",
     re.IGNORECASE,
 )
 
@@ -121,7 +126,9 @@ _TABLE_ROW_UNIT_ONLY = re.compile(
 _BACKMATTER_RE = re.compile(
     r"^(?:glossary|answers?|index|foreword|appendix|images?\s+and|bibliography|"
     r"acknowledgements?|about\s+the|method\s+of|note\s+to|letter\s+to|"
-    r"your\s+journey|preface|introduction)",
+    r"your\s+journey|preface|introduction|"
+    r"शब्दावली|उत्तर|अनुक्रमणिका|प्रस्तावना|परिशिष्ट|ग्रंथसूची|"
+    r"आमुख|भूमिका|टिप्पणी|पत्र)",
     re.IGNORECASE,
 )
 
@@ -130,8 +137,9 @@ _BACKMATTER_RE = re.compile(
 # e.g. "HISTORY", "CIVICS", "SOCIAL SCIENCE", "GEOGRAPHY AND ENVIRONMENT"
 # Rules: all tokens are alpha-only (no digits), 1–5 words, total length < 60.
 _SUBJECT_HEADER_RE = re.compile(
-    r"^[A-Z][A-Z\s\/\-&]{1,58}[A-Z]$"   # all-caps, 2+ chars, no digits
-)
+    r"^(?:[A-Z][A-Z\s\/\-&]{1,58}[A-Z]|[\u0900-\u097F][\u0900-\u097F\s\/\-]{1,58}[\u0900-\u097F])$"
+)   # all-caps, 2+ chars, no digits
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # HELPERS
@@ -256,12 +264,11 @@ def _parse_table_toc(all_lines: list) -> list:
             unit_counter     += 1
             active_unit_id    = unit_counter
             active_unit_name  = cleaned.title()   # "HISTORY" → "History"
-            # Reset global offset to last chapter seen so next subject's
-            # chapter 1 gets a unique global ID.
+            # Track global offset using the last entry's global_chapter_id
+            # so the next subject's chapter numbers stay globally sequential.
             if structured_data:
-                global_ch_offset = structured_data[-1]["chapter_id"]
-            print(f"      📦 Subject: {active_unit_id} – {active_unit_name} "
-                  f"(global offset: {global_ch_offset})")
+                global_ch_offset = structured_data[-1]["global_chapter_id"]
+            print(f"      📦 Subject: {active_unit_id} – {active_unit_name}")
             continue
 
         # ── Try to parse as a data row ───────────────────────────────────────
@@ -280,15 +287,17 @@ def _parse_table_toc(all_lines: list) -> list:
             row["unit_id"]   = active_unit_id
             row["unit_name"] = active_unit_name
 
-        # Make chapter_id globally unique across subjects.
-        # Store the original per-subject number as subject_chapter_id.
-        local_ch_id = row["chapter_id"]
-        row["subject_chapter_id"] = local_ch_id          # "1" within Civics
-        row["chapter_id"]         = global_ch_offset + local_ch_id  # globally unique
+        # chapter_id  = subject-local number (1, 2, 3… within each subject)
+        #               This is what goes into metadata and is shown to users.
+        # global_chapter_id = sequential across the whole book (never resets)
+        #               Use this only for internal DB keys / page-range lookups.
+        local_ch_id = row["chapter_id"]                        # already set by _parse_table_row
+        row["chapter_id"]        = local_ch_id                 # keep as-is: subject-local
+        row["global_chapter_id"] = global_ch_offset + local_ch_id  # sequential across book
 
         is_sub = row.get("is_subtopic", False)
         print(f"      {'  ↳' if is_sub else '⭐'} "
-              f"Ch {row['chapter_id']}  – {row['chapter_name']} "
+              f"Ch {row['chapter_id']} (global #{row['global_chapter_id']}) – {row['chapter_name']} "
               f"[Unit: {row['unit_name']}] [Page: {row['start_page']}–{row['end_page']}]")
 
         structured_data.append(row)

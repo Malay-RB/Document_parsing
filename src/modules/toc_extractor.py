@@ -288,7 +288,7 @@ def run_standalone_toc(pdf_filename, page_list=None):
     # Run API
     api = TOCProcessorAPI()
     patch_toc_processor(api)
-    results , debug_images  = api.run_api(images, debug=ProjectConfig.DEBUG_MODE, model="surya",)
+    results , debug_images  = api.run_api(images, debug=ProjectConfig.DEBUG_MODE, model="easy",)
 
     # Final Export
     with open(json_out, "w", encoding="utf-8") as f:
@@ -319,7 +319,7 @@ def run_standalone_toc(pdf_filename, page_list=None):
 
 if __name__ == "__main__":
     # SETTINGS:
-    FILENAME = "CG_Class-6-Math_toc"       # The .pdf name in your input folder
+    FILENAME = "Ncert_Hindi_math_C_9_toc"       # The .pdf name in your input folder
     PAGES = None         # Set to None if your PDF is already cropped to TOC only
 
     run_standalone_toc(FILENAME, page_list=PAGES)
