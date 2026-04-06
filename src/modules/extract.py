@@ -38,7 +38,7 @@ def run_single_page(
     draw = ImageDraw.Draw(debug_img)
     width, height = image.size
 
-    VISUALS_DIR = r"C:\ArkMalay\Document_parsing\src\output\extracted_visuals"
+    VISUALS_DIR = r"C:\arkRohan\document_parsing\Document_parsing\src\extracted_image"
     save_dir = visuals_dir if visuals_dir else VISUALS_DIR
     os.makedirs(save_dir, exist_ok=True)
 

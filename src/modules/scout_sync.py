@@ -115,18 +115,16 @@ def run_scout_sync(pdf_name, input_path=None, output_path=None, models=None, con
 
                     if probe_results:
                         state["hierarchy_data"] = probe_results
-                        
-                        # 🎯 FIX: Use .get() with a fallback and a null-check
-                        raw_anchor = probe_results[0].get("chapter_name")
-                        
-                        if raw_anchor:
-                            state["target_anchor"] = str(raw_anchor).lower().strip()
+                        # state["target_anchor"] = probe_results[0]["chapter_name"].lower()
+                        chapter_name = probe_results[0].get("chapter_name")
+                        if chapter_name:
+                            state["target_anchor"] = chapter_name.lower()
                             logger.info(f"⚓ ANCHOR CAPTURED: '{state['target_anchor']}'")
                         else:
-                            # Fallback: If name is missing, use the ID (e.g., "chapter 1")
-                            ch_id = probe_results[0].get("chapter_id", "1")
-                            state["target_anchor"] = f"chapter {ch_id}"
-                            logger.warning(f"⚠️ Anchor name missing for Ch {ch_id}. Using fallback: '{state['target_anchor']}'")
+                            logger.warning(f"⚠️ TOC found but chapter_name is None on Page {page_no}. Skipping anchor.")
+                            state["is_discovering_toc"] = False
+                            continue
+                        # logger.info(f"⚓ ANCHOR CAPTURED: '{state['target_anchor']}'")
                     else:
                         logger.warning(f"⚠️ Trigger found but TOC Probe failed on Page {page_no}.")
                         state["is_discovering_toc"] = False

@@ -1,18 +1,3 @@
-"""
-Usage A – monkey-patch an existing instance
---------------------------------------------
-    from toc_patterns import patch_toc_processor
-    api = TOCProcessorAPI()
-    patch_toc_processor(api)
-    results, frames = api.run_api(images)
-
-Usage B – subclass (zero changes to toc_extractor.py)
-------------------------------------------------------
-    from toc_patterns import RobustTOCProcessor
-    api = RobustTOCProcessor()
-    results, frames = api.run_api(images)
-"""
-
 import re
 from typing import Optional
 
@@ -68,13 +53,11 @@ def word_to_int(s: str) -> Optional[int]:
 # COMPILED PATTERNS
 # ─────────────────────────────────────────────────────────────────────────────
 
-# --- Chapter / section ID patterns ---
-
 # Indian:  "3." or "3 " at start
-_Indian_ID    = re.compile(r"^(\d+)\.?\s+")
+_Indian_ID = re.compile(r"^(\d+)\.?\s+")
 
-# Subtopic: "3.1" or "3.1.2" (must NOT be a plain float like 3.14)
-_SUBTOPIC_ID  = re.compile(r"^(\d+)\.(\d+)(?:\.(\d+))?\s+")
+# Subtopic: "3.1" or "3.1.2"
+_SUBTOPIC_ID = re.compile(r"^(\d+)\.(\d+)(?:\.(\d+))?\s+")
 
 # Roman subtopic: "I.1" or "II.3" or "i.ii" at start
 _ROMAN_SUBTOPIC_ID = re.compile(
@@ -89,35 +72,46 @@ _UNNUMBERED_SUBTOPIC_ID = re.compile(
 )
 
 # Roman:   "III." or "III " or "iii " at start
-_ROMAN_ID     = re.compile(r"^([IVXLCDM]+)\.?\s+", re.IGNORECASE)
+_ROMAN_ID = re.compile(r"^([IVXLCDM]+)\.?\s+", re.IGNORECASE)
 
-# FIX 1: \s+ → \s*  so "Chapter1" (no space, common OCR output) is matched.
-# FIX 1b: digit-first alternation so "Chapter10" greedily captures "10" not "1".
-_WORD_CH_ID   = re.compile(
-    r"^(?:chapter|unit|section|part)\s*(\d+|[a-z]+)\s*(?:[\.\:\-–])?\s*",
+# Word-style chapter: "Chapter 1" / "Chapter1" (\\s* handles missing space)
+_WORD_CH_ID = re.compile(
+    # r"^(?:chapter|unit|section|part)\s*(\d+|[a-z]+)\s*(?:[\.\:\-–])?\s*",
+    r"^(?:chapter|unit|section|part|अध्याय|इकाई|भाग|खंड)\s*(\d+|[a-z]+|\d+)\s*(?:[\.\:\-–])?\s*",
     re.IGNORECASE,
 )
 
-# --- Page number / range at END of line ---
-_PAGE_RANGE   = re.compile(
+# Page number / range at end of line
+_PAGE_RANGE = re.compile(
     r"(\d+)\s*(?:[-–—]|to)\s*(\d+)\s*[\w\.\,\%\*]*\s*$",
     re.IGNORECASE,
 )
-_PAGE_SINGLE  = re.compile(r'(?<!\d)(\d{1,4})\s*$')
+_PAGE_SINGLE = re.compile(r'(?<!\d)(\d{1,4})\s*$')
 
-# --- Unit header line (standalone, no chapter number) ---
-_UNIT_HEADER  = re.compile(
-    r"^(?:unit|section|part)\s+(\d+|[IVXLCDM]+)\s*[:\-–]?\s*(.+)?$",
+# Unit/theme header line (standalone, no chapter number)
+# FIX: added "theme" to keyword list
+_UNIT_HEADER = re.compile(
+    # r"^(?:unit|section|part|theme)\s+(.+?)\s*[:\-–—]?\s*(.+)?$",
+    r"^(?:unit|section|part|theme|इकाई|भाग|खंड|विषय)\s+(.+?)\s*[:\-–—]?\s*(.+)?$",
+
     re.IGNORECASE,
 )
 
-# FIX 2: \s+ → \s*  so "Chapter1" (no space) is detected as standalone too.
+# "THEME A — India and the World…" style — letter ID + dash + name
+_THEME_HEADER = re.compile(
+    # r"^(?:theme)\s+([A-Za-z])\s*[-–—]\s*(.+)$",
+    r"^(?:theme|विषय)\s+([A-Za-z\u0900-\u097F])\s*[-–—]\s*(.+)$",
+    re.IGNORECASE,
+)
+
+# Standalone chapter label with no name after it ("Chapter 1", "Chapter1")
 _STANDALONE_CH = re.compile(
-    r"^(?:chapter|unit|section|part)\s*(\d+|[IVXLCDM]+|[a-z]+)\s*$",
+    # r"^(?:chapter|unit|section|part)\s*(\d+|[IVXLCDM]+|[a-z]+)\s*$",
+    r"^(?:chapter|unit|section|part|अध्याय|इकाई|भाग|खंड)\s*(\d+|[IVXLCDM]+|[a-z]+)\s*$",
     re.IGNORECASE,
 )
 
-# --- Table-style TOC row patterns ---
+# Table-style TOC row patterns
 _TABLE_ROW_FULL = re.compile(
     r'^(\d+)\.\s+(.+?)\s+(\d+)\.\s+(.+?)\s+(\d{1,3}[-–—]\d{1,3})\s*$'
 )
@@ -127,6 +121,25 @@ _TABLE_ROW_CHAPTER_ONLY = re.compile(
 _TABLE_ROW_UNIT_ONLY = re.compile(
     r'^(\d+)\.\s+([A-Za-z][^\d]+?)\s*$'
 )
+
+# FIX (Bug 3): back-matter keyword guard — these lines must never become subtopics
+_BACKMATTER_RE = re.compile(
+    r"^(?:glossary|answers?|index|foreword|appendix|images?\s+and|bibliography|"
+    r"acknowledgements?|about\s+the|method\s+of|note\s+to|letter\s+to|"
+    r"your\s+journey|preface|introduction|"
+    r"शब्दावली|उत्तर|अनुक्रमणिका|प्रस्तावना|परिशिष्ट|ग्रंथसूची|"
+    r"आमुख|भूमिका|टिप्पणी|पत्र)",
+    re.IGNORECASE,
+)
+
+# Subject/section header in table-style TOCs — standalone ALL-CAPS line with
+# no page number and no chapter-ID prefix.
+# e.g. "HISTORY", "CIVICS", "SOCIAL SCIENCE", "GEOGRAPHY AND ENVIRONMENT"
+# Rules: all tokens are alpha-only (no digits), 1–5 words, total length < 60.
+_SUBJECT_HEADER_RE = re.compile(
+    r"^(?:[A-Z][A-Z\s\/\-&]{1,58}[A-Z]|[\u0900-\u097F][\u0900-\u097F\s\/\-]{1,58}[\u0900-\u097F])$"
+)   # all-caps, 2+ chars, no digits
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # HELPERS
@@ -159,7 +172,7 @@ def _safe_sanitize(text: str) -> str:
 
 
 def _strip_html(text: str) -> str:
-    """Remove HTML/XML tags like <b>, </b>, <i>, <math>...</math> etc."""
+    """Remove HTML/XML tags like <b>, </b>, <i>, <math>…</math> etc."""
     return re.sub(r'<[^>]+>', '', text).strip()
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -167,10 +180,6 @@ def _strip_html(text: str) -> str:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _parse_table_row(cleaned: str):
-    """
-    Try to parse a line as a table-style TOC row.
-    Returns a dict or None.
-    """
     m = _TABLE_ROW_FULL.match(cleaned)
     if m:
         unit_id   = int(m.group(1))
@@ -194,36 +203,102 @@ def _parse_table_row(cleaned: str):
     return None
 
 
+def _is_subject_header(text: str) -> bool:
+    """
+    Return True if a line is a standalone subject/section header in a
+    table-style TOC, e.g. "HISTORY", "CIVICS", "SOCIAL SCIENCE".
+
+    Criteria:
+      - Matches _SUBJECT_HEADER_RE (all-caps, no digits, 2–60 chars)
+      - No page number embedded
+      - Word count 1–6
+      - Not a known back-matter keyword (those are handled separately)
+    """
+    text = text.strip()
+    if not _SUBJECT_HEADER_RE.match(text):
+        return False
+    if re.search(r'\d', text):
+        return False                      # digits → not a pure header
+    sp, _, _ = _extract_page_range(text)
+    if sp is not None:
+        return False                      # has a page number → data row
+    if len(text.split()) > 6:
+        return False
+    return True
+
+
 def _parse_table_toc(all_lines: list) -> list:
-    """Parser for table-layout TOCs."""
-    structured_data = []
-    active_unit_id   = None
-    active_unit_name = None
+    """
+    Parser for table-layout TOCs where chapters are listed as numbered rows,
+    optionally preceded by standalone subject/section headers.
+
+    Improvements vs. original:
+      • Detects standalone ALL-CAPS subject headers ("HISTORY", "CIVICS")
+        and stores them as active_unit_name, so every chapter row beneath
+        them gets the correct unit context.
+      • Generates globally-unique chapter IDs by prefixing the unit counter
+        when chapter numbers restart under a new subject (e.g. Civics Ch 1
+        becomes chapter_id=11 if History had 10 chapters, or stores
+        subject_chapter_id for the original number).
+      • Carries active unit context forward across chapter-only rows
+        (unchanged behaviour for single-subject table TOCs).
+    """
+    structured_data   = []
+    active_unit_id    = None       # increments each time a new subject header is seen
+    active_unit_name  = None
+    unit_counter      = 0          # counts subject sections seen so far
+    global_ch_offset  = 0         # added to local chapter numbers for global uniqueness
 
     for raw_line in all_lines:
         cleaned = raw_line.strip()
-        cleaned = re.sub(r'<[^>]+>', '', cleaned)
-        cleaned = re.sub(r'\.{2,}', ' ', cleaned)
+        cleaned = re.sub(r'<[^>]+>', '', cleaned)      # strip HTML
+        cleaned = re.sub(r'\.{2,}', ' ', cleaned)      # strip leader dots
         cleaned = re.sub(r'\s{2,}', ' ', cleaned).strip()
 
-        if not cleaned or len(cleaned) < 4:
+        if not cleaned or len(cleaned) < 2:
+            continue
+
+        # ── Subject header detection ─────────────────────────────────────────
+        # Must run BEFORE _parse_table_row so headers aren't silently skipped.
+        if _is_subject_header(cleaned):
+            unit_counter     += 1
+            active_unit_id    = unit_counter
+            active_unit_name  = cleaned.title()   # "HISTORY" → "History"
+            # Track global offset using the last entry's global_chapter_id
+            # so the next subject's chapter numbers stay globally sequential.
+            if structured_data:
+                global_ch_offset = structured_data[-1]["global_chapter_id"]
+            print(f"      📦 Subject: {active_unit_id} – {active_unit_name}")
+            continue
+
+        # ── Try to parse as a data row ───────────────────────────────────────
+        if len(cleaned) < 4:
             continue
 
         row = _parse_table_row(cleaned)
         if row is None:
             continue
 
+        # Attach current subject context
         if row["unit_id"] is not None:
-            active_unit_id   = row["unit_id"]
-            active_unit_name = row["unit_name"]
+            # Full row already carries unit info (rare in this TOC style)
+            pass
         else:
             row["unit_id"]   = active_unit_id
             row["unit_name"] = active_unit_name
 
+        # chapter_id  = subject-local number (1, 2, 3… within each subject)
+        #               This is what goes into metadata and is shown to users.
+        # global_chapter_id = sequential across the whole book (never resets)
+        #               Use this only for internal DB keys / page-range lookups.
+        local_ch_id = row["chapter_id"]                        # already set by _parse_table_row
+        row["chapter_id"]        = local_ch_id                 # keep as-is: subject-local
+        row["global_chapter_id"] = global_ch_offset + local_ch_id  # sequential across book
+
         is_sub = row.get("is_subtopic", False)
         print(f"      {'  ↳' if is_sub else '⭐'} "
-              f"Ch {row['chapter_id']} – {row['chapter_name']} "
-              f"[Unit: {row['unit_id']}] [Page: {row['start_page']}–{row['end_page']}]")
+              f"Ch {row['chapter_id']} (global #{row['global_chapter_id']}) – {row['chapter_name']} "
+              f"[Unit: {row['unit_name']}] [Page: {row['start_page']}–{row['end_page']}]")
 
         structured_data.append(row)
 
@@ -234,27 +309,107 @@ def _parse_table_toc(all_lines: list) -> list:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _merge_floating_page_numbers(lines: list) -> list:
+    """
+    Two jobs in one pass:
+
+    Job 1 — attach orphaned bare page numbers/ranges to the PREVIOUS line.
+      e.g. ["Locating Places on the Earth", "7"]
+           → ["Locating Places on the Earth 7"]
+      FIX: appends to ANY non-empty previous line (old code only matched
+      digit-start lines, which excluded chapter-name lines).
+
+    Job 2 — attach orphaned bare chapter-ID tokens ("2.", "10.") to the
+      NEXT line (the chapter name), so they don't corrupt the previous entry.
+      e.g. ["1. Name 7", "2.", "Oceans and Continents", "27"]
+           → ["1. Name 7", "2. Oceans and Continents", "27"]
+      This happens when OCR splits "2.  Oceans" into two separate bounding
+      boxes placed on different lines.
+    """
+    # ── Pass 1: merge orphan "N." forward onto the next line ────────────────
+    pre = []
+    i = 0
+    while i < len(lines):
+        stripped = lines[i].strip()
+        # Bare chapter-ID token: just "2." or "10." with nothing else
+        if re.fullmatch(r'\d{1,3}\.', stripped) and i + 1 < len(lines):
+            next_stripped = lines[i + 1].strip()
+            # Only merge forward if the next line is NOT already a complete
+            # chapter line (i.e. it has no leading digit prefix itself)
+            if not re.match(r'^\d+\.?\s', next_stripped):
+                merged_fwd = stripped + " " + next_stripped
+                pre.append(merged_fwd)
+                print(f"      🔗 Merged orphan ID forward: [{stripped}] + [{next_stripped}]")
+                i += 2
+                continue
+        pre.append(lines[i])
+        i += 1
+
+    # ── Pass 2: merge orphan bare numbers/ranges backward onto previous line ─
     merged = []
-    for line in lines:
+    for line in pre:
         stripped = line.strip()
         is_num = re.fullmatch(
             r'\d{1,4}(\s*(?:-|–|—|to)\s*\d{1,4})?', stripped, re.IGNORECASE
         )
-        if is_num and merged and re.match(r'^\d+', merged[-1].strip()):
+        # Append to ANY previous non-empty line, not just digit-start lines
+        if is_num and merged and merged[-1].strip():
             merged[-1] = merged[-1].strip() + " " + stripped
         else:
             merged.append(line)
     return merged
 
 
+def _is_continuation_line(text: str) -> bool:
+    """
+    Return True if a line looks like the wrapped tail of a chapter name,
+    e.g. "in Rural Areas" or "WITH WHOLE NUMBER".
+
+    Criteria:
+      - does NOT start with a chapter keyword
+      - does NOT start with a digit or "N." (Indian-style ID or orphan number)
+      - does NOT look like a bare chapter-number token ("2.", "10.")
+      - does NOT contain a page number of its own
+      - is relatively short (<= 80 chars) — long lines are likely new entries
+      - is NOT all-caps short token (watermark / stamp like "NCERT")
+    """
+    if _WORD_CH_ID.match(text):
+        return False
+    if _STANDALONE_CH.match(text):
+        return False
+    if _Indian_ID.match(text):
+        return False
+    if _THEME_HEADER.match(text):
+        return False
+    if _BACKMATTER_RE.match(text):
+        return False
+    # Reject bare orphan chapter-number tokens: "2." / "10." / "2" alone
+    # These are Indian-style ID fragments split off by OCR — not name tails.
+    if re.fullmatch(r'\d{1,3}\.?', text.strip()):
+        return False
+    sp, _, _ = _extract_page_range(text)
+    if sp is not None:
+        return False          # has its own page number → new entry
+    if len(text) > 80:
+        return False          # too long to be a mere continuation
+    # Reject ALL-CAPS short tokens — likely watermarks/stamps ("NCERT", "DRAFT")
+    if text.isupper() and len(text.split()) <= 3:
+        return False
+    return True
+
+
 def _merge_two_line_chapters(lines: list) -> list:
     """
-    Merges two-line TOC entries where the chapter label appears alone on one
-    line and the chapter name (and optional page) follows on the next.
+    Merges multi-line TOC entries into single lines.
 
-    Also handles the case where a chapter's name wraps to a continuation line
-    (no chapter keyword, no page number) — e.g. "WITH WHOLE NUMBER" after
-    "Chapter 2  WHOLE NUMBER AND OPERATIONS  4-19".
+    Handles three cases:
+      1. Standalone label ("Chapter 1") followed by name + optional page line.
+      2. Chapter name that wraps onto the next line ("in Rural Areas" after
+         "11. Grassroots Democracy — Part 2: Local Government  163").
+         FIX (Bug 1b): these continuation lines are now APPENDED to the
+         previous merged line instead of being skipped silently — so the full
+         chapter name is preserved.
+      3. "WITH WHOLE NUMBER" style orphan after a chapter that already has its
+         page number — silently dropped (it duplicates info already merged).
     """
     merged = []
     i = 0
@@ -271,7 +426,7 @@ def _merge_two_line_chapters(lines: list) -> list:
                 if (i + 2 < len(lines) and
                     re.fullmatch(r'\d{1,4}(\s*(?:-|–|—|to)\s*\d{1,4})?',
                                  _strip_html(lines[i + 2].strip()), re.IGNORECASE)):
-                    page_line  = _strip_html(lines[i + 2].strip())
+                    page_line   = _strip_html(lines[i + 2].strip())
                     merged_line = current_clean + " " + next_clean + " " + page_line
                     merged.append(merged_line)
                     print(f"      🔗 Merged three-line chapter: [{current_clean}] + "
@@ -284,24 +439,21 @@ def _merge_two_line_chapters(lines: list) -> list:
                 i += 2
                 continue
 
-        # ── Case 2: continuation line — wraps from previous chapter name ──
-        # Heuristic: line has no chapter keyword, no page number, and the
-        # previous merged line already has a page number → append name fragment.
-        elif (merged
-              and not _WORD_CH_ID.match(current_clean)
-              and not _Indian_ID.match(current_clean)
-              and not _STANDALONE_CH.match(current_clean)
-              and not re.fullmatch(r'\d{1,4}(\s*(?:-|–|—|to)\s*\d{1,4})?',
-                                   current_clean, re.IGNORECASE)):
-            sp, ep, _ = _extract_page_range(current_clean)
+        # ── Case 2 & 3: possible continuation / orphan line ─────────────────
+        if merged and _is_continuation_line(current_clean):
             prev_sp, prev_ep, _ = _extract_page_range(merged[-1])
-            # Only treat as continuation if THIS line has no page number
-            # and the previous line already has one (so the chapter is "done")
-            # We skip it silently — it's a wrapped subtitle, not a new chapter.
-            if sp is None and prev_sp is not None:
-                print(f"      ⏭  Skipped continuation line: [{current_clean}]")
-                i += 1
-                continue
+
+            if prev_sp is None:
+                # Previous line has NO page yet → append this fragment to it
+                # e.g. "11. Grassroots Democracy Part 2 Local Government" + "in Rural Areas 163"
+                merged[-1] = merged[-1].strip() + " " + current_clean
+                print(f"      🔗 Appended continuation: [{current_clean}] → merged into previous")
+            else:
+                # Previous line already has a page (chapter is "done") →
+                # this is a wrapped subtitle duplicate, drop it silently
+                print(f"      ⏭  Skipped orphan continuation: [{current_clean}]")
+            i += 1
+            continue
 
         merged.append(current_raw)
         i += 1
@@ -310,20 +462,18 @@ def _merge_two_line_chapters(lines: list) -> list:
 
 def _detect_id_style(lines: list) -> str:
     """
-    Scan lines and vote on the predominant chapter-ID style.
-
-    FIX: Uses the updated _WORD_CH_ID (with \\s* instead of \\s+) so that
-    "Chapter1" (no space, common in Surya OCR output) counts as a word-style
-    vote rather than falling through to Indian by default.
-
+    Vote on the predominant chapter-ID style.
     Returns: 'Indian' | 'roman' | 'word'
     """
     votes = {"Indian": 0, "roman": 0, "word": 0}
     for line in lines:
-        line = _strip_html(line.strip())   # strip HTML before voting
+        line = _strip_html(line.strip())
+        # Skip bare page numbers — they must not influence the style vote
+        if re.fullmatch(r'\d{1,4}(\s*[-–—]\s*\d{1,4})?', line):
+            continue
         if _SUBTOPIC_ID.match(line) or _Indian_ID.match(line):
             votes["Indian"] += 1
-        elif _WORD_CH_ID.match(line):      # uses the fixed pattern (\\s*)
+        elif _WORD_CH_ID.match(line):
             votes["word"] += 1
         elif _ROMAN_ID.match(line):
             tok = line.split()[0].rstrip(".")
@@ -367,6 +517,9 @@ def _parse_line(
     (ch_int, ch_name, start_p, end_p, is_subtopic, raw_subtopic_id).
     Returns None if the line does not match any known pattern.
     """
+    # Guard: reject bare numbers / page ranges — never a chapter entry
+    if re.fullmatch(r'\d{1,4}(\s*[-–—to]\s*\d{1,4})?', cleaned.strip()):
+        return None
 
     # ── 0. Roman subtopic: "I.1" or "II.3" ──────────────────────────────────
     rom_sub_m = _ROMAN_SUBTOPIC_ID.match(cleaned)
@@ -382,9 +535,6 @@ def _parse_line(
         return (parent_id, name, start_p, end_p, True, sub_id_str)
 
     # ── 0b. Unnumbered subtopic: "(a)" or "a." ───────────────────────────────
-    # Skipped for roman-style TOCs: single-letter Romans like "I." / "V." are
-    # indistinguishable from unnumbered labels at this pattern level.
-    # Roman subtopics use "I.1" notation, handled by _ROMAN_SUBTOPIC_ID above.
     unnum_m = _UNNUMBERED_SUBTOPIC_ID.match(cleaned) if id_style != "roman" else None
     if unnum_m:
         label   = (unnum_m.group(1) or unnum_m.group(2)).lower()
@@ -411,12 +561,9 @@ def _parse_line(
             return None
         return (parent_id, name, start_p, end_p, True, sub_id_str)
 
-    # ── 2. Word chapter: "Chapter 1  ..." or "Chapter1  ..." ─────────────────
-    #    Checked BEFORE Indian so that "Chapter 1 ..." is not matched by
-    #    _Indian_ID when clean_text() has already stripped the "Chapter" keyword.
-    #    We try word style regardless of detected id_style when the line starts
-    #    with a chapter keyword — this makes the parser robust to clean_text
-    #    implementations that strip or preserve the keyword differently.
+    # ── 2. Word chapter: "Chapter 1  …" or "Chapter1  …" ────────────────────
+    # Tried BEFORE Indian/Roman so lines starting with "Chapter" are never
+    # mis-parsed as Indian-style even if id_style was wrongly detected.
     word_m = _WORD_CH_ID.match(cleaned)
     if word_m:
         num_tok = word_m.group(1)
@@ -483,13 +630,18 @@ def robust_transform_logic(self, raw_pages: list) -> list:
     """
     Replacement for TOCProcessorAPI.transform_logic that handles all TOC patterns.
 
-    Key fixes vs. original:
-      • _WORD_CH_ID uses \\s* so "Chapter1" (no space) is matched.
-      • _STANDALONE_CH uses \\s* for the same reason.
-      • _parse_line tries word-style match BEFORE Indian/Roman, making it
-        robust regardless of whether clean_text() strips the chapter keyword.
-      • _merge_two_line_chapters now also silently drops continuation lines
-        (e.g. "WITH WHOLE NUMBER") that are wrapped subtitle fragments.
+    Fixes applied in this version:
+      • _merge_floating_page_numbers attaches orphaned numbers to ANY previous
+        line, not just digit-start lines (fixes Ch 1 page=None).
+      • _merge_two_line_chapters APPENDS continuation lines (e.g. "in Rural
+        Areas") to the previous entry instead of dropping them, preserving the
+        full chapter name for Ch 11 / Ch 12 style entries.
+      • _THEME_HEADER and _UNIT_HEADER now recognise "Theme A — …" patterns,
+        populating active_unit_id / active_unit_name for theme-grouped TOCs.
+      • _BACKMATTER_RE prevents Glossary, Answers, Images etc. from being
+        classified as subtopics of the last chapter.
+      • _detect_id_style skips bare page-number tokens before voting.
+      • _parse_line guards against bare numbers at the top before any match.
     """
     print("🧠 [TOC_TRANSFORM] Converting lines to structured JSON (ROBUST MODE)…")
 
@@ -527,6 +679,14 @@ def robust_transform_logic(self, raw_pages: list) -> list:
             continue
         cleaned = self.clean_text(line)
         if not cleaned or len(cleaned) < self.min_line_length:
+            continue
+
+        # ── Theme header: "Theme A — India and the World…" ──────────────────
+        theme_m = _THEME_HEADER.match(cleaned)
+        if theme_m:
+            active_unit_id   = theme_m.group(1).upper()   # "A", "B", "C"…
+            active_unit_name = _safe_sanitize(theme_m.group(2))
+            print(f"      📦 Theme: {active_unit_id} – {active_unit_name}")
             continue
 
         # ── Unit-header-only lines ───────────────────────────────────────────
@@ -578,8 +738,29 @@ def robust_transform_logic(self, raw_pages: list) -> list:
                     structured_data.append(entry_dict)
             continue
 
-        # ── Fallback: unnumbered subtopic detection ───────────────────────────
+        # ── Fallback: unnumbered subtopic / back-matter detection ─────────────
         if entry is None and last_chapter_int > 0:
+            # FIX (Bug 3): back-matter lines must never become subtopics.
+            # Store them as appendix entries with chapter_id=None instead.
+            if _BACKMATTER_RE.match(cleaned):
+                sp, ep, _ = _extract_page_range(cleaned)
+                bm_name = _safe_sanitize(_strip_trailing_junk(
+                    re.sub(r'\d+', '', cleaned).strip()
+                )) or cleaned.split()[0].capitalize()
+                entry_dict = {
+                    "unit_id":      None,
+                    "unit_name":    None,
+                    "chapter_id":   None,
+                    "chapter_name": _safe_sanitize(cleaned[:cleaned.rfind(str(sp))].strip()) if sp else _safe_sanitize(cleaned),
+                    "start_page":   sp,
+                    "end_page":     ep,
+                    "is_appendix":  True,
+                }
+                print(f"      📎 Back-matter: {entry_dict['chapter_name']} [Page: {sp}]")
+                structured_data.append(entry_dict)
+                continue
+
+            # Regular unnumbered subtopic
             start_p, end_p, name_raw = _extract_page_range(cleaned)
             name = _safe_sanitize(_strip_trailing_junk(name_raw))
             if start_p is not None and name and len(name) > 3:
@@ -666,7 +847,7 @@ def robust_transform_logic(self, raw_pages: list) -> list:
     return structured_data
 
 # ─────────────────────────────────────────────────────────────────────────────
-# PUBLIC API  — patch function & mixin
+# PUBLIC API  — patch function & subclass factory
 # ─────────────────────────────────────────────────────────────────────────────
 
 def patch_toc_processor(api_instance):
@@ -684,7 +865,7 @@ class RobustTOCProcessor:
         import sys, os
         sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
         try:
-            from modules.toc_extractor import TOCProcessorAPI
+            from toc_extractor import TOCProcessorAPI
         except ImportError:
             import importlib.util, pathlib
             spec = importlib.util.spec_from_file_location(

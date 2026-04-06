@@ -77,7 +77,16 @@ def run_scout_phase(image, boxes, ocr_engine, model, page_no, width, height):
     clean_trigger = re.sub(r'[^\w\s]', '', header_text).strip()
 
     # 3. Define Keywords (Lowercase for matching)
-    TOC_KEYWORDS = ["content", "contents", "index", "table of content", "table of contents"]
+    TOC_KEYWORDS = [
+    "content", "contents", "index", "table of content", "table of contents",
+    # Hindi
+    "सामग्री",      # content / contents
+    "अनुक्रम",      # index / sequence
+    "अनुक्रमणिका",  # index (formal)
+    "सूची",         # list / index
+    "विषय-सूची",    # table of contents (hyphenated)
+    "विषय सूची",    # table of contents (no hyphen — OCR sometimes drops it)
+]
     
     # 🎯 FIX: Use 'in' on the list itself for an EXACT match check
     if clean_trigger in TOC_KEYWORDS:
