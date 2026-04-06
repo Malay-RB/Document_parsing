@@ -100,7 +100,7 @@ class TOCProcessorAPI:
         text = re.sub(r'\s{2,}', ' ', text)
         return text.strip()
 
-    def run_api(self, toc_images, debug=True, model="surya"):
+    def run_api(self, toc_images, debug=True, model=ProjectConfig.TOC_EXTRACTION_MODEL):
         print(f"\n:book: [TOC_PROCESS] Extracting structure using {model.upper()}...")
         raw_output = []
         debug_frames = []
@@ -288,7 +288,7 @@ def run_standalone_toc(pdf_filename, page_list=None):
     # Run API
     api = TOCProcessorAPI()
     patch_toc_processor(api)
-    results , debug_images  = api.run_api(images, debug=ProjectConfig.DEBUG_MODE, model="surya",)
+    results , debug_images  = api.run_api(images, debug=ProjectConfig.DEBUG_MODE, model=ProjectConfig.TOC_EXTRACTION_MODEL)
 
     # Final Export
     with open(json_out, "w", encoding="utf-8") as f:

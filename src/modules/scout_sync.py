@@ -109,7 +109,7 @@ def run_scout_sync(pdf_name, input_path=None, output_path=None, models=None, con
                     state["scout_images"].append(draw_layout(image, boxes))
                     
                     # PROBE: Identify Anchor text (e.g., Chapter 1 title)
-                    probe_results, debug_frames = toc_api.run_api([image], debug=debug_mode, model="surya")
+                    probe_results, debug_frames = toc_api.run_api([image], debug=debug_mode, model=ProjectConfig.TOC_EXTRACTION_MODEL)
                     if debug_frames: 
                         state["debug_images"].extend(debug_frames)
 
@@ -181,7 +181,7 @@ def run_scout_sync(pdf_name, input_path=None, output_path=None, models=None, con
         if final_toc_pages:
             try:
                 toc_images = [pdf_loader.load_page(p_no) for p_no in final_toc_pages]
-                full_hierarchy, _ = toc_api.run_api(toc_images, debug=debug_mode, model="surya")
+                full_hierarchy, _ = toc_api.run_api(toc_images, debug=debug_mode, model=ProjectConfig.TOC_EXTRACTION_MODEL)
             except Exception as e:
                 logger.error(f"❌ Full TOC extraction failed: {e}. Using probe data fallback.")
 

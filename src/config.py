@@ -24,6 +24,7 @@ class ProjectConfig:
     TEST_OUTPUT = os.path.join(BASE_STR, "tests", "test_output")
 
     # --- AI & EXTRACTION SETTINGS ---
+    TOC_EXTRACTION_MODEL = "surya"
     EXTRACTION_MODEL = "easy"
     SCOUT_LIMIT = 20
     PDF_SCALE = 3.5

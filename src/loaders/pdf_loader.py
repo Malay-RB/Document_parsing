@@ -3,7 +3,7 @@ from processing.logger import logger
 
 class PDFLoader:
 
-    def __init__(self, scale=3.0):
+    def __init__(self, scale):
         self.scale = scale
         self.pdf = None
 
