@@ -7,9 +7,10 @@ src/logs
 src/logs_perf
 src/tests/test_output
 src/credentials
+
 src/__pycache__
 **/__pycache__/
-*.py[cod]
+
 .ruff_cache/
 .bandit/
 .pytest_cache/
