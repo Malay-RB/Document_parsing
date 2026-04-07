@@ -14,9 +14,9 @@ from exporters.drive_upload import upload_to_drive
 from config import ProjectConfig
 from modules.yaml_exporter import convert_json_to_yaml
 
-from structure.hierarchy import convert_to_hierarchy
-from structure.asset_fit import NearbyContentLinker
-from structure.final_id import process_json
+from semantics.hierarchy import convert_to_hierarchy
+from semantics.asset_fit import NearbyContentLinker
+from semantics.final_id import process_json
 
 
 def format_runtime(seconds: float) -> str:
