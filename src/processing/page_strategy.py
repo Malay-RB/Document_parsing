@@ -1,6 +1,10 @@
 from processing.logger import logger
 from config import LABEL_MAP
 import re
+from processing.page_no_patterns import PageNumberPatterns
+
+_PNP = PageNumberPatterns()
+
 
 def _extract_page_val(p_text, classifier, context_label):
     """Helper to try multiple ways to find a number in text."""
@@ -8,11 +12,14 @@ def _extract_page_val(p_text, classifier, context_label):
         return None
         
     # 1. Direct Leading Number (NCERT Style: '122 Chapter Title')
-    number_match = re.match(r'^(\d+)', p_text)
-    if number_match:
-        val = int(number_match.group(1))
-        # INFO: Important milestone for pagination sync
-        logger.info(f"🔢 Detected Leading Number: {val} in '{p_text}' ({context_label})")
+    # number_match = re.match(r'^(\d+)', p_text)
+    # if number_match:
+    #     val = int(number_match.group(1))
+    #     # INFO: Important milestone for pagination sync
+    #     logger.info(f"🔢 Detected Leading Number: {val} in '{p_text}' ({context_label})")
+    #     return val
+    val = _PNP.extract(p_text)
+    if val is not None:
         return val
         
     # 2. Semantic Classification (Regex/Context)
@@ -48,10 +55,10 @@ def _detect_from_header(image, boxes, safe_coords, ocr_engine, classifier, ocr_t
 
 def _detect_from_footer(image, boxes, safe_coords, ocr_engine, classifier, ocr_type, height):
     # DEBUG: Diagnostic info for footers
-    logger.debug("🔍 Checking Footer: Targeting last 2 blocks.")
+    logger.debug("🔍 Checking Footer: Targeting last 4 blocks.")
     
     total_boxes = len(boxes)
-    start_idx = max(0, total_boxes - 2)
+    start_idx = max(0, total_boxes - 4)
 
     for idx in range(start_idx, total_boxes):
         box = boxes[idx]

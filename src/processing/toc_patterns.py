@@ -128,8 +128,10 @@ _BACKMATTER_RE = re.compile(
     r"acknowledgements?|about\s+the|method\s+of|note\s+to|letter\s+to|"
     r"your\s+journey|preface|introduction|"
     r"शब्दावली|उत्तर|अनुक्रमणिका|प्रस्तावना|परिशिष्ट|ग्रंथसूची|"
-    r"आमुख|भूमिका|टिप्पणी|पत्र)",
-    re.IGNORECASE,
+    r"आमुख|भूमिका|टिप्पणी|पत्र|"
+    r"अभ्यास|प्रश्नावली|पुनरावृत्ति|सारांश|मानचित्र|" 
+    r"परियोजना|क्रियाकलाप|विषय-सूची)",
+    re.IGNORECASE | re.UNICODE,
 )
 
 # Subject/section header in table-style TOCs — standalone ALL-CAPS line with
@@ -137,7 +139,13 @@ _BACKMATTER_RE = re.compile(
 # e.g. "HISTORY", "CIVICS", "SOCIAL SCIENCE", "GEOGRAPHY AND ENVIRONMENT"
 # Rules: all tokens are alpha-only (no digits), 1–5 words, total length < 60.
 _SUBJECT_HEADER_RE = re.compile(
-    r"^(?:[A-Z][A-Z\s\/\-&]{1,58}[A-Z]|[\u0900-\u097F][\u0900-\u097F\s\/\-]{1,58}[\u0900-\u097F])$"
+    r"^(?:"
+    r"[A-Z][A-Z\s\/\-&]{1,58}[A-Z]"           # English ALL-CAPS (unchanged)
+    r"|"
+    r"[\u0900-\u097F\u0902-\u0903\u093E-\u094D]"  # Devanagari: at least 1 char
+    r"[\u0900-\u097F\u0902-\u0903\u093E-\u094D\s\/\-]*"  # followed by 0+ more
+    r")$",
+    re.UNICODE
 )   # all-caps, 2+ chars, no digits
 
 
@@ -203,6 +211,12 @@ def _parse_table_row(cleaned: str):
     return None
 
 
+_HINDI_KNOWN_SUBJECTS = {
+    "इतिहास", "भूगोल", "नागरिकशास्त्र", "अर्थशास्त्र",
+    "समाजिक विज्ञान", "सामाजिक विज्ञान", "राजनीति विज्ञान",
+    "विज्ञान", "गणित", "हिंदी", "संस्कृत", "पर्यावरण अध्ययन",
+    "राजनीतिशास्त्र", "समकालीन भारत", "लोकतांत्रिक राजनीति",
+}
 def _is_subject_header(text: str) -> bool:
     """
     Return True if a line is a standalone subject/section header in a
@@ -215,6 +229,9 @@ def _is_subject_header(text: str) -> bool:
       - Not a known back-matter keyword (those are handled separately)
     """
     text = text.strip()
+
+    if text in _HINDI_KNOWN_SUBJECTS:
+        return True
     if not _SUBJECT_HEADER_RE.match(text):
         return False
     if re.search(r'\d', text):
@@ -224,6 +241,10 @@ def _is_subject_header(text: str) -> bool:
         return False                      # has a page number → data row
     if len(text.split()) > 6:
         return False
+    # For Devanagari text, skip the isupper() check (no case concept)
+    is_devanagari = bool(re.search(r'[\u0900-\u097F]', text))
+    if not is_devanagari and not text.isupper():
+        return False 
     return True
 
 
@@ -257,13 +278,13 @@ def _parse_table_toc(all_lines: list) -> list:
 
         if not cleaned or len(cleaned) < 2:
             continue
-
+        
         # ── Subject header detection ─────────────────────────────────────────
         # Must run BEFORE _parse_table_row so headers aren't silently skipped.
         if _is_subject_header(cleaned):
             unit_counter     += 1
             active_unit_id    = unit_counter
-            active_unit_name  = cleaned.title()   # "HISTORY" → "History"
+            active_unit_name = cleaned if re.search(r'[\u0900-\u097F]', cleaned) else cleaned.title() # "HISTORY" → "History"
             # Track global offset using the last entry's global_chapter_id
             # so the next subject's chapter numbers stay globally sequential.
             if structured_data:
