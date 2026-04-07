@@ -115,7 +115,10 @@ def run_single_page(
         image, boxes, safe_coords, ocr_engine,
         classifier, ocr_type="easy", height=height, strategy=pg_no_strategy
     )
+    print(f"Raw detected page: {raw_detected_no}")
     printed_no = tracker.resolve(page_no, raw_detected_no)
+    if printed_no is None:
+        printed_no = page_no
 
     print(f"📌 Printed page detected: {printed_no}")
 
