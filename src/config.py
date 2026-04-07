@@ -26,8 +26,8 @@ class ProjectConfig:
     # --- AI & EXTRACTION SETTINGS ---
     TOC_EXTRACTION_MODEL = "easy"
     EXTRACTION_MODEL = "easy"
-    SCOUT_LIMIT = 20
-    PDF_SCALE = 3.5
+    SCOUT_LIMIT = 15
+    PDF_SCALE = 4.0
     PG_NO_STRATEGY = "HEADER"
     DEBUG_MODE = True
 

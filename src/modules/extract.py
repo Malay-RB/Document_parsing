@@ -475,7 +475,7 @@ def run_deep_extraction(pdf_filename, input_path=None, output_path=None, start_p
 if __name__ == "__main__":
     setup_logger(debug_mode=True)
     cfg = ProjectConfig()
-    TARGET = "test_sec"
+    TARGET = "test_tn_10"
     
     all_blocks = []
     caught_files = {}

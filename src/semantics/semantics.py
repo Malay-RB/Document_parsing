@@ -1,5 +1,10 @@
 import re
 from config import SEMANTIC_PATTERNS
+from processing.page_no_patterns import PageNumberPatterns
+
+
+_PNP = PageNumberPatterns()
+
 
 class SemanticClassifier:
     def clean_text(self, text):
@@ -31,14 +36,17 @@ class SemanticClassifier:
             return {"role": "SECTION", "clean_text": cleaned}
 
         # 1. PAGE NUMBER DETECTION
-        if len(cleaned) < 15:
-            digits = re.findall(r'\d+', cleaned)
-            if digits:
-                return {
-                    "role": "PAGE_NUMBER",
-                    "page_number": int(digits[0]),
-                    "clean_text": cleaned
-                }
+        # if len(cleaned) < 15:
+        #     digits = re.findall(r'\d+', cleaned)
+        #     if digits:
+        #         return {
+        #             "role": "PAGE_NUMBER",
+        #             "page_number": int(digits[0]),
+        #             "clean_text": cleaned
+        #         }
+        val = _PNP.extract(cleaned)
+        if val is not None:
+            return {"role": "PAGE_NUMBER", "page_number": val, "clean_text": cleaned}
 
         # # 2. MATH/EQUATION DETECTION
         # if "\\" in cleaned or any(op in cleaned for op in ["^", "_", "{", "}"]):
