@@ -9,6 +9,7 @@ from loaders.model_loader import ModelLoader
 
 from modules.scout_sync import run_scout_sync
 from modules.toc_extractor import TOCProcessorAPI
+from processing.toc_patterns import patch_toc_processor
 from modules.extract import run_deep_extraction
 from exporters.drive_upload import upload_to_drive
 from config import ProjectConfig
@@ -132,22 +133,22 @@ def run_pipeline(pdf_name, book_metadata, config: ProjectConfig):
         except Exception as e:
             logger.error(f":x: Final ID step failed: {e}")
 
-    def sync_all_to_cloud():
-        if not config.ENABLE_DRIVE_SYNC:
-            return
+    # def sync_all_to_cloud():
+    #     if not config.ENABLE_DRIVE_SYNC:
+    #         return
 
-        logger.info("☁️ Initiating Google Drive Sync...")
-        upload_to_drive(final_output_path, pdf_name, config, mode="object")
+    #     logger.info("☁️ Initiating Google Drive Sync...")
+    #     upload_to_drive(final_output_path, pdf_name, config, mode="object")
 
-        pdf_path    = caught_debug_files.get("visual_pdf")
-        coords_path = caught_debug_files.get("coords_json")
-        shared_debug_run_id = None
+    #     pdf_path    = caught_debug_files.get("visual_pdf")
+    #     coords_path = caught_debug_files.get("coords_json")
+    #     shared_debug_run_id = None
 
-        if pdf_path and os.path.exists(pdf_path):
-            _, shared_debug_run_id = upload_to_drive(pdf_path, pdf_name, config, mode="debug")
-        if coords_path and os.path.exists(coords_path):
-            upload_to_drive(coords_path, pdf_name, config, mode="debug",
-                            existing_run_id=shared_debug_run_id)
+    #     if pdf_path and os.path.exists(pdf_path):
+    #         _, shared_debug_run_id = upload_to_drive(pdf_path, pdf_name, config, mode="debug")
+    #     if coords_path and os.path.exists(coords_path):
+    #         upload_to_drive(coords_path, pdf_name, config, mode="debug",
+    #                         existing_run_id=shared_debug_run_id)
 
     # ── Pipeline ────────────────────────────────────────────────────────
     try:
@@ -225,12 +226,12 @@ def run_pipeline(pdf_name, book_metadata, config: ProjectConfig):
         # ✅ PHASES 4 & 5: Hierarchy + Asset linking
         run_hierarchy_and_linking()
 
-        sync_all_to_cloud()
+        # sync_all_to_cloud()
 
     except (Exception, KeyboardInterrupt) as e:
         save_data()
         run_hierarchy_and_linking()   # best-effort on failure too
-        sync_all_to_cloud()
+        # sync_all_to_cloud()
         logger.error(f"💥 FATAL PIPELINE ERROR: {e}")
         logger.error("🛑 Pipeline terminated. Final assets synced to Drive.")
         logger.info(f":sparkles: Total Blocks: {state['total_blocks']}")
