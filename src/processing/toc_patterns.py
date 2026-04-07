@@ -865,7 +865,7 @@ class RobustTOCProcessor:
         import sys, os
         sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
         try:
-            from toc_extractor import TOCProcessorAPI
+            from modules.toc_extractor import TOCProcessorAPI
         except ImportError:
             import importlib.util, pathlib
             spec = importlib.util.spec_from_file_location(

@@ -24,7 +24,7 @@ class ProjectConfig:
     TEST_OUTPUT = os.path.join(BASE_STR, "tests", "test_output")
 
     # --- AI & EXTRACTION SETTINGS ---
-    TOC_EXTRACTION_MODEL = "surya"
+    TOC_EXTRACTION_MODEL = "easy"
     EXTRACTION_MODEL = "easy"
     SCOUT_LIMIT = 20
     PDF_SCALE = 3.5
@@ -36,12 +36,9 @@ class ProjectConfig:
     # ------Drive Upload------
     ENABLE_DRIVE_SYNC = False
     DRIVE_AUTH_MODE = "service" # or "token"
-    CATEGORY = "Education"
-    BOARD = "CBSE"
-    GRADE = "10"
     SERVICE_ACCOUNT_PATH = "credentials/gv4ex001-f1a212036ab2.json"
     TOKEN_PATH = "credentials/token.json"
-    DRIVE_FOLDER_ID = "10V8JwbALeyy6qsd5ORlay55gK5a7tPUy"
+    DRIVE_FOLDER_ID = "1DEThVzwsNyW7Ar0kqf7vvDiBLER5q-dI"
 
     def __init__(self):
         # Automatically detect if we are running via Pytest
