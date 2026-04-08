@@ -112,10 +112,21 @@ def run_single_page(
 
     # --- 3. PAGINATION ---
     raw_detected_no = find_printed_page_no(
-        image, boxes, safe_coords, ocr_engine,
-        classifier, ocr_type="easy", height=height, strategy=pg_no_strategy
-    )
-    printed_no = tracker.resolve(page_no, raw_detected_no)
+            image,
+            boxes,
+            safe_coords,
+            ocr_engine,
+            classifier,
+            ocr_type="easy",
+            height=height
+        )
+    print(f"RAW detected page: {raw_detected_no}")
+
+    # 🔥 NEW: just collect, don't resolve
+    tracker.process(page_no, raw_detected_no)
+
+    # temporary value (will be corrected later)
+    printed_no = raw_detected_no if raw_detected_no is not None else page_no
 
     print(f"📌 Printed page detected: {printed_no}")
 
@@ -270,7 +281,7 @@ def run_single_page(
 
     print(f"✅ Finished page {page_no} with {len(page_blocks)} blocks\n")
 
-    return page_blocks, tracker.offset is not None, debug_img
+    return page_blocks, False, debug_img
 
 @track_performance
 def run_deep_extraction(pdf_filename, input_path=None, output_path=None, start_page=1, pg_no_strategy=None, hierarchy=None, models=None, config=None, force_prod=False):
@@ -329,9 +340,9 @@ def run_deep_extraction(pdf_filename, input_path=None, output_path=None, start_p
     classifier = SemanticClassifier()
     context_tracker = ContextTracker()
     
-    pending_buffer = []    
-    offset_locked = False
+
     block_counter = 1
+    pending_buffer = []
 
     debug_coords_registry = [] # New: To store box metadata
     box_counter_global = 1
@@ -371,45 +382,8 @@ def run_deep_extraction(pdf_filename, input_path=None, output_path=None, start_p
             del image, debug_img
             gc.collect()
 
-            # --- BUFFER & YIELD LOGIC ---
-            if is_ready:
-                if not offset_locked:
-                    offset_locked = True
-                    logger.info(f"🔓 Offset Locked ({tracker.offset}). Flushing {len(pending_buffer)} pages...")
-                    for old_pdf_no, old_blocks in pending_buffer:
-                        corrected_no = old_pdf_no + tracker.offset
+            pending_buffer.append((page_no, current_page_blocks))
 
-                        # 🎯 FIX: Build id_map for the buffered page
-                        page_id_map = { b["block_index"]: b["id"] for b in old_blocks }
-
-                        transformed_batch = []
-                        for b in old_blocks:
-                            b["printed_page"] = corrected_no
-                            transformed_batch.append(
-                                transform_structure(b, block_index=b["block_index"], id_map=page_id_map)
-                            )
-                        yield transformed_batch
-                    pending_buffer.clear()
-
-                # Build mapping: local_idx → global block_index
-                id_map = {
-                    b["block_index"]: b["id"] 
-                    for b in current_page_blocks
-                }
-
-                # YIELD: blocks from the current (just-processed) page
-                transformed_page = [
-                    transform_structure(
-                        b,
-                        block_index=b["block_index"],
-                        id_map=id_map
-                    )
-                    for b in current_page_blocks
-                ]
-                yield transformed_page
-            else:
-                pending_buffer.append((page_no, current_page_blocks))
-                logger.info(f"📥 Page {page_no} buffered (awaiting offset).")
 
     except (Exception, KeyboardInterrupt) as e:
         logger.error(f"💥 Pipeline Error: {e}. Attempting data recovery...")
@@ -428,16 +402,29 @@ def run_deep_extraction(pdf_filename, input_path=None, output_path=None, start_p
 
     finally:
         # --- FINAL DATA CLEANUP (OFFSET NEVER FOUND) ---
-        if pending_buffer and not offset_locked:
-            logger.warning("⚠️ Final flush: Pagination offset never found.")
-            for _, old_blocks in pending_buffer:
-                # 🎯 FIX: Build id_map for final cleanup
+        if pending_buffer:
+            logger.info("🔒 Finalizing offset using best streak...")
+
+            offset = tracker.finalize()
+
+            for old_pdf_no, old_blocks in pending_buffer:
                 fin_id_map = { b["block_index"]: b["id"] for b in old_blocks }
-                final_batch = [
-                    transform_structure(b, block_index=b["block_index"], id_map=fin_id_map) 
-                    for b in old_blocks
-                ]
-                
+
+                final_batch = []
+                for b in old_blocks:
+                    if offset is not None:
+                        b["printed_page"] = old_pdf_no + offset
+                    else:
+                        b["printed_page"] = old_pdf_no
+
+                    final_batch.append(
+                        transform_structure(
+                            b,
+                            block_index=b["block_index"],
+                            id_map=fin_id_map
+                        )
+                    )
+
                 yield final_batch
         
         # --- EXCEPTION-SAFE DEBUG PDF FINALIZATION ---
@@ -472,7 +459,7 @@ def run_deep_extraction(pdf_filename, input_path=None, output_path=None, start_p
 if __name__ == "__main__":
     setup_logger(debug_mode=True)
     cfg = ProjectConfig()
-    TARGET = "test_sec"
+    TARGET = "test_Class10"
     
     all_blocks = []
     caught_files = {}
