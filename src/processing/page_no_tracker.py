@@ -1,6 +1,8 @@
 class PageNumberTracker:
     def __init__(self):
-        self.offset = None
+        self.current_streak = []
+        self.best_streak = []
+        self.min_streak = 4
 
         # NEW: streak tracking
         self.current_streak = []
@@ -13,63 +15,49 @@ class PageNumberTracker:
 
     def resolve(self, pdf_page, detected_printed):
         print(f"[Tracker] Input detected: {detected_printed}")  # :white_check_mark: HERE
+    def process(self, pdf_page, detected_printed):
+        print(f"[Tracker] Input detected: {detected_printed}")
 
-        # Ignore absurd numbers
+        # Filter noise
         if detected_printed is not None:
             if detected_printed <= 0 or detected_printed > 2000:
-                print(f":no_entry_sign: Ignoring absurd page number {detected_printed}")
+                print(f":no_entry_sign: Ignoring {detected_printed}")
                 detected_printed = None
 
-        # ================================
-        # :lock: If offset already locked → use it
-        # ================================
-        if self.offset is not None:
-            expected = pdf_page + self.offset
+        if detected_printed is None:
+            return
 
-            if detected_printed is not None:
-                if detected_printed == expected:
-                    return detected_printed
-                else:
-                    print(
-                        f":warning: Suspicious detection {detected_printed}, expected {expected}. Using inferred."
-                    )
+        if not self.current_streak:
+            self.current_streak.append((pdf_page, detected_printed))
+            print(f"[STREAK] Started: {[detected_printed]}")
+        else:
+            _, last = self.current_streak[-1]
 
-            return expected
-
-        # ================================
-        # :brain: Build streak (core logic)
-        # ================================
-        if detected_printed is not None:
-
-            if not self.current_streak:
+            if abs(detected_printed - (last + 1)) <= 1:
                 self.current_streak.append((pdf_page, detected_printed))
+                print(f"[STREAK] Growing: {[p for _, p in self.current_streak]}")
             else:
-                _, last_printed = self.current_streak[-1]
+                print(f"[BREAK] at pdf={pdf_page}, val={detected_printed}")
 
-                # Check sequential consistency
-                if abs(detected_printed - (last_printed + 1)) <= 1:
-                    self.current_streak.append((pdf_page, detected_printed))
-                else:
-                    # streak break → update best
-                    if len(self.current_streak) > len(self.best_streak):
-                        self.best_streak = self.current_streak
+                if len(self.current_streak) > len(self.best_streak):
+                    self.best_streak = self.current_streak
 
-                    # start new streak
-                    self.current_streak = [(pdf_page, detected_printed)]
+                self.current_streak = [(pdf_page, detected_printed)]
+                print(f"[STREAK] Restarted: {[detected_printed]}")
 
-        # Always keep best updated
         if len(self.current_streak) > len(self.best_streak):
             self.best_streak = self.current_streak
 
-        # ================================
-        # :closed_lock_with_key: Lock offset ONLY when confident
-        # ================================
-        if len(self.best_streak) >= self.min_streak:
-            first_pdf, first_printed = self.best_streak[0]
-            self.offset = first_printed - first_pdf
+    def finalize(self):
+        if len(self.best_streak) < self.min_streak:
+            print("❌ No strong streak found")
+            return None
 
-            print(f":triangular_ruler: Offset Locked from streak: {self.offset}")
+        first_pdf, first_printed = self.best_streak[0]
+        offset = first_printed - first_pdf
 
-            return pdf_page + self.offset
+        print(f"\n🔒 FINAL LOCK")
+        print(f"[BEST STREAK]: {[p for _, p in self.best_streak]}")
+        print(f"[OFFSET]: {offset}")
 
-        return detected_printed if detected_printed is not None else pdf_page
+        return offset
