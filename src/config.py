@@ -33,6 +33,8 @@ class ProjectConfig:
 
     ENABLE_YAML_EXPORT  = False
 
+    STRATEGY = "ASYNC"
+
     # ------Drive Upload------
     ENABLE_DRIVE_SYNC = False
     DRIVE_AUTH_MODE = "service" # or "token"

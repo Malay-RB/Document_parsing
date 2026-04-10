@@ -319,7 +319,7 @@ def run_standalone_toc(pdf_filename, page_list=None):
 
 if __name__ == "__main__":
     # SETTINGS:
-    FILENAME = "Ncert_Hindi_math_C_6_TOC"       # The .pdf name in your input folder
+    FILENAME = "Ncert_class_9_toc"       # The .pdf name in your input folder
     PAGES = None         # Set to None if your PDF is already cropped to TOC only
 
     run_standalone_toc(FILENAME, page_list=PAGES)

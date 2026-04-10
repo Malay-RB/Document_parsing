@@ -5,6 +5,9 @@ import PIL.ImageOps
 from PIL import Image, ImageOps, ImageEnhance
 from processing.logger import logger
 from config import LABEL_MAP
+import asyncio
+import time
+from concurrent.futures import ThreadPoolExecutor
 
 # --- HELPER UTILITIES FOR INTEGRATION ---
 
@@ -123,7 +126,7 @@ def run_sync_phase(image, boxes, ocr_engine, model, target_anchor, height, width
                         return True
     return False
 
-def extract_page_block(image, box, safe_coord, models, ocr_engine, ocr_type, boxes_on_page=None, current_idx=None, output_dir=None, page_no=None):
+def extract_page_block(image, box, safe_coord, models, ocr_engine, ocr_type):
     """Main router for individual blocks with Defensive Cropping and Visual Linking."""
     # 1. Coordinate Validation & Clipping
     img_w, img_h = image.size
@@ -186,3 +189,81 @@ def extract_page_block(image, box, safe_coord, models, ocr_engine, ocr_type, box
     except Exception as e:
         logger.error(f"❌ OCR engine error: {e}")
         return ""
+    
+
+async def batch_extract_surya_async(image, boxes, coords, models, ocr_engine):
+    """
+    images = single page as image from the pdf
+    boxes = label, confidence, bbox
+    coords = coordinates
+    models = loaded models
+    ocr_engine = helping functions to interact with models for extraction
+    """
+    start_time = time.perf_counter()
+    results = [None] * len(boxes)
+    surya_tasks = [] # (original_index, PIL_crop)
+
+    logger.info(f"🚀 [ASYNC START] Preparing to process {len(boxes)} blocks.")
+    
+    for i, (box, coord) in enumerate(zip(boxes, coords)):
+        group = LABEL_MAP.get(box.label, "TEXT")
+        
+        # Safety: Skip Visuals/Tables and route Math elsewhere if needed
+        if group in ["VISUAL", "TABLE"]:
+            results[i] = ""
+            logger.debug(f"⏩ [SKIP] Block {i} is {group}. No OCR required.")
+            continue
+            
+        if group == "MATH":
+            logger.info(f"📐 [MATH] Block {i} identified as MATH. Processing immediately via Rapid...")
+            crop = image.crop(coord)
+            results[i] = ocr_engine.extract(crop, model="rapid", is_math=True)
+            continue
+
+        # Valid text block for Surya
+        crop = image.crop(coord).convert("RGB")
+        surya_tasks.append((i, crop))
+        logger.debug(f"📦 [QUEUE] Block {i} ({box.label}) added to Surya batch queue.")
+
+    if not surya_tasks:
+        logger.warning("⚠️ [ASYNC] No Surya-compatible blocks found on this page.")
+        return results
+
+    indices, crops = zip(*surya_tasks)
+    logger.info(f"📡 [DISPATCH] Sending batch of {len(surya_tasks)} blocks to GPU/CPU Executor.")
+    
+    ocr_start = time.perf_counter()
+    
+    # We wrap the blocking predictor call to keep the event loop responsive
+    loop = asyncio.get_event_loop()
+    try:
+        # Tracking the thread hand-off
+        logger.info(f"🧵 [THREAD] Relinquishing main thread control to background executor...")
+        
+        predictions = await loop.run_in_executor(
+            None, 
+            lambda: models.recognition_predictor(list(crops), det_predictor=models.detection_predictor)
+        )
+        
+        logger.info(f"📥 [RECEIVE] Executor returned results for {len(predictions)} blocks.")
+    except Exception as e:
+        logger.error(f"❌ [CRASH] OCR Predictor failed: {e}")
+        raise e
+
+    ocr_duration = time.perf_counter() - ocr_start
+
+    # 3. Map results back
+    logger.info(f"🔗 [MAPPING] Re-aligning results to original indices to preserve reading order.")
+    for idx, pred in zip(indices, predictions):
+        raw_text = " ".join([line.text for line in pred.text_lines])
+        results[idx] = raw_text
+
+        display_text = (raw_text[:80] + '...') if len(raw_text) > 80 else raw_text
+
+        logger.info(f"📄 [RAW TEXT] Block {idx} | Content: \"{display_text}\"")
+        logger.debug(f"✅ [DONE] Block {idx} text mapped (Length: {len(results[idx])})")
+
+    total_duration = time.perf_counter() - start_time
+    logger.info(f"⏱️  [SURYA BATCH] {len(surya_tasks)} blocks | Total: {total_duration:.3f}s | OCR: {ocr_duration:.3f}s")
+    
+    return results
