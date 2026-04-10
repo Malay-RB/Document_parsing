@@ -109,7 +109,7 @@ def run_scout_sync(pdf_name, input_path=None, output_path=None, models=None, con
                     state["scout_images"].append(draw_layout(image, boxes))
                     
                     # PROBE: Identify Anchor text (e.g., Chapter 1 title)
-                    probe_results, debug_frames = toc_api.run_api([image], debug=debug_mode, model="surya")
+                    probe_results, debug_frames = toc_api.run_api([image], debug=debug_mode, model=ProjectConfig.TOC_EXTRACTION_MODEL)
                     if debug_frames: 
                         state["debug_images"].extend(debug_frames)
 
@@ -148,39 +148,69 @@ def run_scout_sync(pdf_name, input_path=None, output_path=None, models=None, con
                     state["toc_buffer"].append(page_no)
                     logger.debug(f"⏳ Page {page_no}: Anchor not yet found.")
 
-            if page_no % 3 == 0: 
-                gc.collect()
-
-        # 3. FINAL SUMMARY
-        tracking_report = {
-            "pdf_filename": pdf_name,
-            "toc_pages": state["toc_buffer"],
-            "content_start_page": page_no if state["sync_completed"] else None,
-            "anchor_used": state["target_anchor"],
-            "hierarchy": state["hierarchy_data"]
-        }
+        # --- 3. FINAL SUMMARY & AUTO-FALLBACK ---
+    
+        # Determine starting point: Use trigger page or page 1
+        scan_start = state["toc_buffer"][0] if state["toc_buffer"] else 1
+        
+        # Initialize default values to prevent UnboundLocalError
+        full_hierarchy = state.get("hierarchy_data", [])
+        final_toc_pages = state["toc_buffer"]
+        content_start = None
 
         if state["sync_completed"]:
+            # CASE A: Sync Worked
+            logger.info(f"✨ Sync complete. Running FULL TOC extraction on pages: {state['toc_buffer']}")
+            final_toc_pages = state["toc_buffer"]
+            content_start = page_no # The page where anchor was found
+        
+        elif state["toc_buffer"]:
+            # CASE B: Sync Failed - AUTO-FALLBACK to 5-page window
+            logger.warning(f"⚠️ Sync failed. Auto-fallback: Defining TOC as 5 pages starting from Page {scan_start}")
+            
+            # Define the 5-page window
+            fallback_end = min(scan_start + 4, total_pages)
+            final_toc_pages = list(range(scan_start, fallback_end + 1))
+            
+            # Explicitly set extraction to start from the 6th page
+            content_start = scan_start + 5 
+
+        # Only run OCR if we have valid TOC pages
+        if final_toc_pages:
+            try:
+                toc_images = [pdf_loader.load_page(p_no) for p_no in final_toc_pages]
+                full_hierarchy, _ = toc_api.run_api(toc_images, debug=debug_mode, model=ProjectConfig.TOC_EXTRACTION_MODEL)
+            except Exception as e:
+                logger.error(f"❌ Full TOC extraction failed: {e}. Using probe data fallback.")
+
+        # Build the final report
+        tracking_report = {
+            "pdf_filename": pdf_name,
+            "toc_pages": final_toc_pages,
+            "content_start_page": content_start, # Tell Main.py where to start deep extraction
+            "anchor_used": state["target_anchor"],
+            "hierarchy": full_hierarchy 
+        }
+
+        # Save and return if we have a valid path forward
+        if content_start:
             report_path = os.path.join(report_dir, f"{pdf_name}_sync_report.json")
             with open(report_path, "w") as f:
                 json.dump(tracking_report, f, indent=4)
-            logger.info(f"📊 SYNC REPORT SAVED: {report_path}")
+            
+            if not state["sync_completed"]:
+                logger.info(f"🚀 Fallback complete. Deep Extraction will start at Page {content_start}")
+            
             return tracking_report
 
-        # If sync failed but we found a TOC, return partial results
-        if state["toc_buffer"]:
-            logger.warning(f"⚠️ Sync failed but TOC found on pages: {state['toc_buffer']}")
-            return tracking_report
-
-        # Save visuals only if we have absolutely nothing
+        # Total failure (No TOC found at all)
         all_visuals = state["scout_images"] + state["debug_images"]
         if all_visuals:
             PDFDebugExporter().save(all_visuals, debug_pdf_path)
-
         return None
 
     except Exception as e:
-        logger.critical(f"💥 SCOUT/SYNC ERROR: {str(e)}", exc_info=True)
+        logger.error(f"💥 Error in Final Summary logic: {e}")
         return None
     finally:
         pdf_loader.close()

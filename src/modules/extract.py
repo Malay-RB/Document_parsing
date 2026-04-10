@@ -6,7 +6,8 @@ import gc
 import pikepdf, img2pdf
 from PIL import ImageDraw
 import uuid
-
+import time
+import asyncio
 # Ensure project root is in path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
@@ -21,7 +22,9 @@ from processing.optimize_layout import filter_overlapping_boxes, get_unified_sor
 from processing.performance_track import track_performance
 from semantics.semantics import SemanticClassifier, ContextTracker ,transform_structure
 from processing.logger import logger, setup_logger
-from config import LABEL_MAP, ProjectConfig
+from config import LABEL_MAP, ProjectConfig 
+from processing.pipeline_utils import batch_extract_surya_async
+
 
 @track_performance
 def run_single_page(
@@ -30,6 +33,8 @@ def run_single_page(
     visuals_dir=None
 ):
     """Handles layout detection, pagination resolution, and block classification for a single page."""
+    page_start = time.perf_counter()
+
 
     print(f"\n📄 Processing page: {page_no}")
 
@@ -105,49 +110,74 @@ def run_single_page(
 
     print(f"🔍 Total detected boxes: {len(boxes)}")
 
-    safe_coords = [
-        [max(0, b.bbox[0]), max(0, b.bbox[1]), min(width, b.bbox[2]), min(height, b.bbox[3])]
-        for b in boxes
-    ]
+    PADDING = 10
+
+    safe_coords = []
+    for b in boxes:
+        x0, y0, x1, y1 = b.bbox
+
+        # 🔥 Apply padding
+        x0 = max(0, x0 - PADDING)
+        y0 = max(0, y0 - PADDING)
+        x1 = min(width, x1 + PADDING)
+        y1 = min(height, y1 + PADDING)
+
+        safe_coords.append([x0, y0, x1, y1])
+
+    # ---  OCR EXTRACTION STRATEGY ---
+    USE_ASYNC = ProjectConfig.STRATEGY == "ASYNC" 
+
+    if USE_ASYNC:
+        # Batch extract all blocks at once using Surya's GPU/Thread batching
+        extracted_texts = asyncio.run(batch_extract_surya_async(image, boxes, safe_coords, models, ocr_engine))
+    else:
+        extracted_texts = []
+        sync_start = time.perf_counter()
+        for i, (box, coord) in enumerate(zip(boxes, safe_coords)):
+            # Sequential extraction
+            text = extract_page_block(image, box, coord, models, ocr_engine, ocr_type="surya", layout_engine=layout_engine)
+            extracted_texts.append(text)
+        
+        sync_duration = time.perf_counter() - sync_start
+        print(f"⏱️  [SURYA SYNC] Processed {len(boxes)} blocks sequentially in {sync_duration:.3f}s")
 
     # --- 3. PAGINATION ---
     raw_detected_no = find_printed_page_no(
-        image, boxes, safe_coords, ocr_engine,
-        classifier, ocr_type="easy", height=height, strategy=pg_no_strategy
-    )
-    printed_no = tracker.resolve(page_no, raw_detected_no)
+            image,
+            boxes,
+            safe_coords,
+            ocr_engine,
+            classifier,
+            ocr_type="easy",
+            height=height,
+            strategy=pg_no_strategy
+        )
+    print(f"RAW detected page: {raw_detected_no}")
+
+    # 🔥 NEW: just collect, don't resolve
+    tracker.process(page_no, raw_detected_no)
+
+    # temporary value (will be corrected later)
+    printed_no = raw_detected_no if raw_detected_no is not None else page_no
 
     print(f"📌 Printed page detected: {printed_no}")
 
-    # --- 4. BLOCK PROCESSING ---
+    # --- 4. BLOCK PROCESSING (Assembly & Metadata) ---
     page_blocks = []
 
-    for i, box in enumerate(boxes):
-        print(f"DEBUG: Box {i} | Raw Model Label: '{box.label}' | Group: {LABEL_MAP.get(box.label, 'NOT_IN_MAP')}")
-        layout_index  = i + 1
+    # We now loop through the pre-extracted texts
+    for i, (box, res_content) in enumerate(zip(boxes, extracted_texts)):
+        layout_index = i + 1
         coords = safe_coords[i]
 
         draw.rectangle(coords, outline="red", width=3)
         draw.text((coords[0], max(0, coords[1] - 18)), f"{i+1}:{box.label}", fill="red")
 
+        # --- TOC METADATA (Preserved) ---
         chapter_info = get_toc_metadata(printed_no, hierarchy_data)
         u_id = chapter_info.get("unit_id") or "0"
         c_id = chapter_info.get("chapter_id") or "0"
         current_block_id = f"u{u_id}_c{c_id}_p{page_no}_b{layout_index}"
-
-        res_content = extract_page_block(
-            image,
-            box,
-            coords,
-            models,
-            ocr_engine,
-            ocr_type="easy",
-            layout_engine=layout_engine
-        )
-
-        # if res_content == "[SKIP_STANDALONE_CAPTION]":
-        #     print(f"⏭️ Skipping standalone caption at block {i}")
-        #     continue
 
         
         label_group = LABEL_MAP.get(box.label) 
@@ -201,51 +231,40 @@ def run_single_page(
                 logger.info(f"📊 TABLE block has no text — keeping as TABLE_BLOCK.")
 
         elif label_group == "MATH":
-            role = "EQUATION"
-            clean_text = res_content
+            role, clean_text = "EQUATION", res_content
         elif label_group == "CAPTION":
-            # 🎯 FORCED ROLE for Captions
-            role = "CAPTION"
-            clean_text = res_content
+            role, clean_text = "CAPTION", res_content
         else:
+            # Semantic classification happens here
             semantic_res = classifier.classify(res_content, layout_label=box.label)
             role = semantic_res["role"]
             clean_text = semantic_res["clean_text"]
 
-
-        # --- STATE BEFORE UPDATE ---
+        # --- CONTEXT TRACKING (Preserved) ---
         current_state = context_tracker.attach_metadata()
-        # --- SECTION HANDLING ---
         if role == "SECTION":
-            block_section_id = None
-            parent_link = None
+            block_section_id, parent_link = None, None
         else:
             parent_link = current_state.get("section_block_id")
             block_section_id = current_state.get("section_id")
 
-        # --- UPDATE CONTEXT ---
         context_tracker.update(role, clean_text, block_id=current_block_id)
 
-        # --- FIGURE HANDLING --- (FIGURES & TABLES)
+        # --- FIGURE HANDLING (Preserved) ---
         asset_path = None
         if role in ["FIGURE_BLOCK", "TABLE_BLOCK"]:
             try:
                 x0, y0, x1, y1 = coords
                 crop = image.crop((x0, y0, x1, y1))
-
                 asset_filename = f"{uuid.uuid4().hex}.png"
                 asset_save_path = os.path.join(save_dir, asset_filename)
-
                 crop.save(asset_save_path, format="PNG")
                 crop.close()
-
                 asset_path = asset_save_path
-                print(f"   🖼️ Figure saved: {asset_save_path}")
-
             except Exception as err:
-                print(f"   ⚠️ Save Error: {err}")
+                print(f"⚠️ Save Error: {err}")
 
-        # --- FINAL BLOCK ---
+        # --- FINAL BLOCK ASSEMBLY (Preserved) ---
         block_data = {
             "id": current_block_id,
             "pdf_page": page_no,
@@ -260,7 +279,6 @@ def run_single_page(
             "asset": asset_path,
             "block_index": layout_index,
         }
-
         page_blocks.append(block_data)
 
     # --- NEARBY CONTENT LINKING ---
@@ -312,7 +330,7 @@ def run_single_page(
 
     print(f"✅ Finished page {page_no} with {len(page_blocks)} blocks\n")
 
-    return page_blocks, tracker.offset is not None, debug_img
+    return page_blocks, False, debug_img
 
 @track_performance
 def run_deep_extraction(pdf_filename, input_path=None, output_path=None, start_page=1, pg_no_strategy=None, hierarchy=None, models=None, config=None, force_prod=False):
@@ -325,7 +343,12 @@ def run_deep_extraction(pdf_filename, input_path=None, output_path=None, start_p
     if isinstance(final_in, tuple): final_in = final_in[0]
 
     pdf_path = os.path.join(final_in, f"{pdf_filename}.pdf")
-    strategy = pg_no_strategy if pg_no_strategy else cfg.PG_NO_STRATEGY
+    strategy = pg_no_strategy if pg_no_strategy else ProjectConfig.PG_NO_STRATEGY
+
+    # 🎯 NEW: Create a book-specific subfolder for visuals
+    book_visuals_dir = os.path.join(auto_out, "extracted_visuals", pdf_filename)
+    os.makedirs(book_visuals_dir, exist_ok=True)
+    logger.info(f"📂 Organized visuals will be saved to: {book_visuals_dir}")
 
     # Debug PDF Paths
     debug_dir = os.path.join(auto_out, "debug_visuals")
@@ -358,16 +381,17 @@ def run_deep_extraction(pdf_filename, input_path=None, output_path=None, start_p
         detection_predictor=models.detection_predictor,
         rapid_text_engine=models.rapid_text_engine,
         rapid_latex_engine=models.rapid_latex_engine,
-        easyocr_reader=models.easyocr_reader
+        easyocr_reader=models.easyocr_reader,
+        
     )
     
     tracker = PageNumberTracker()
     classifier = SemanticClassifier()
     context_tracker = ContextTracker()
     
-    pending_buffer = []    
-    offset_locked = False
+
     block_counter = 1
+    pending_buffer = []
 
     debug_coords_registry = [] # New: To store box metadata
     box_counter_global = 1
@@ -381,7 +405,7 @@ def run_deep_extraction(pdf_filename, input_path=None, output_path=None, start_p
             # Unpack the 3rd return value (debug_img)
             current_page_blocks, is_ready, debug_img = run_single_page(
                 image, page_no, models, layout_engine, ocr_engine, 
-                classifier, strategy, tracker, hierarchy, context_tracker=context_tracker
+                classifier, strategy, tracker, hierarchy, context_tracker=context_tracker, visuals_dir = book_visuals_dir
             )
 
             # Append to Registry for the Coord JSON
@@ -407,45 +431,8 @@ def run_deep_extraction(pdf_filename, input_path=None, output_path=None, start_p
             del image, debug_img
             gc.collect()
 
-            # --- BUFFER & YIELD LOGIC ---
-            if is_ready:
-                if not offset_locked:
-                    offset_locked = True
-                    logger.info(f"🔓 Offset Locked ({tracker.offset}). Flushing {len(pending_buffer)} pages...")
-                    for old_pdf_no, old_blocks in pending_buffer:
-                        corrected_no = old_pdf_no + tracker.offset
+            pending_buffer.append((page_no, current_page_blocks))
 
-                        # 🎯 FIX: Build id_map for the buffered page
-                        page_id_map = { b["block_index"]: b["id"] for b in old_blocks }
-
-                        transformed_batch = []
-                        for b in old_blocks:
-                            b["printed_page"] = corrected_no
-                            transformed_batch.append(
-                                transform_structure(b, block_index=b["block_index"], id_map=page_id_map)
-                            )
-                        yield transformed_batch
-                    pending_buffer.clear()
-
-                # Build mapping: local_idx → global block_index
-                id_map = {
-                    b["block_index"]: b["id"] 
-                    for b in current_page_blocks
-                }
-
-                # YIELD: blocks from the current (just-processed) page
-                transformed_page = [
-                    transform_structure(
-                        b,
-                        block_index=b["block_index"],
-                        id_map=id_map
-                    )
-                    for b in current_page_blocks
-                ]
-                yield transformed_page
-            else:
-                pending_buffer.append((page_no, current_page_blocks))
-                logger.info(f"📥 Page {page_no} buffered (awaiting offset).")
 
     except (Exception, KeyboardInterrupt) as e:
         logger.error(f"💥 Pipeline Error: {e}. Attempting data recovery...")
@@ -464,16 +451,29 @@ def run_deep_extraction(pdf_filename, input_path=None, output_path=None, start_p
 
     finally:
         # --- FINAL DATA CLEANUP (OFFSET NEVER FOUND) ---
-        if pending_buffer and not offset_locked:
-            logger.warning("⚠️ Final flush: Pagination offset never found.")
-            for _, old_blocks in pending_buffer:
-                # 🎯 FIX: Build id_map for final cleanup
+        if pending_buffer:
+            logger.info("🔒 Finalizing offset using best streak...")
+
+            offset = tracker.finalize()
+
+            for old_pdf_no, old_blocks in pending_buffer:
                 fin_id_map = { b["block_index"]: b["id"] for b in old_blocks }
-                final_batch = [
-                    transform_structure(b, block_index=b["block_index"], id_map=fin_id_map) 
-                    for b in old_blocks
-                ]
-                
+
+                final_batch = []
+                for b in old_blocks:
+                    if offset is not None:
+                        b["printed_page"] = old_pdf_no + offset
+                    else:
+                        b["printed_page"] = old_pdf_no
+
+                    final_batch.append(
+                        transform_structure(
+                            b,
+                            block_index=b["block_index"],
+                            id_map=fin_id_map
+                        )
+                    )
+
                 yield final_batch
         
         # --- EXCEPTION-SAFE DEBUG PDF FINALIZATION ---

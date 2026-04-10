@@ -32,8 +32,8 @@ def _extract_page_val(p_text, classifier, context_label):
     return None
 
 def _detect_from_header(image, boxes, safe_coords, ocr_engine, classifier, ocr_type, height):
-    # Check first 8 boxes 
-    for i, box in enumerate(boxes[:8]):
+    # Check first 3 boxes 
+    for i, box in enumerate(boxes[:3]):
         label = getattr(box, 'label', None) 
         if label is None and isinstance(box, dict):
             label = box.get('label')

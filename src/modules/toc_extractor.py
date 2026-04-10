@@ -100,7 +100,7 @@ class TOCProcessorAPI:
         text = re.sub(r'\s{2,}', ' ', text)
         return text.strip()
 
-    def run_api(self, toc_images, debug=True, model="surya"):
+    def run_api(self, toc_images, debug=True, model=ProjectConfig.TOC_EXTRACTION_MODEL):
         print(f"\n:book: [TOC_PROCESS] Extracting structure using {model.upper()}...")
         raw_output = []
         debug_frames = []
@@ -269,7 +269,7 @@ def run_standalone_toc(pdf_filename, page_list=None):
         print(f":x: Error: {pdf_path} not found.")
         return
 
-    loader = PDFLoader(scale=3.5)
+    loader = PDFLoader(ProjectConfig.PDF_SCALE)
     loader.open(pdf_path)
 
     # Logic for page selection
@@ -288,7 +288,7 @@ def run_standalone_toc(pdf_filename, page_list=None):
     # Run API
     api = TOCProcessorAPI()
     patch_toc_processor(api)
-    results , debug_images  = api.run_api(images, debug=ProjectConfig.DEBUG_MODE, model="easy",)
+    results , debug_images  = api.run_api(images, debug=ProjectConfig.DEBUG_MODE, model=ProjectConfig.TOC_EXTRACTION_MODEL)
 
     # Final Export
     with open(json_out, "w", encoding="utf-8") as f:
@@ -319,7 +319,7 @@ def run_standalone_toc(pdf_filename, page_list=None):
 
 if __name__ == "__main__":
     # SETTINGS:
-    FILENAME = "Geo_Hindi_NCERT_toc"       # The .pdf name in your input folder
+    FILENAME = "8-Vigyan-cg-toc"       # The .pdf name in your input folder
     PAGES = None         # Set to None if your PDF is already cropped to TOC only
 
     run_standalone_toc(FILENAME, page_list=PAGES)
