@@ -135,7 +135,7 @@ def run_single_page(
         sync_start = time.perf_counter()
         for i, (box, coord) in enumerate(zip(boxes, safe_coords)):
             # Sequential extraction
-            text = extract_page_block(image, box, coord, models, ocr_engine, ocr_type="surya")
+            text = extract_page_block(image, box, coord, models, ocr_engine, ocr_type="surya", layout_engine=layout_engine)
             extracted_texts.append(text)
         
         sync_duration = time.perf_counter() - sync_start
@@ -178,20 +178,6 @@ def run_single_page(
         u_id = chapter_info.get("unit_id") or "0"
         c_id = chapter_info.get("chapter_id") or "0"
         current_block_id = f"u{u_id}_c{c_id}_p{page_no}_b{layout_index}"
-
-        res_content = extract_page_block(
-            image,
-            box,
-            coords,
-            models,
-            ocr_engine,
-            ocr_type="easy",
-            layout_engine=layout_engine
-        )
-
-        # if res_content == "[SKIP_STANDALONE_CAPTION]":
-        #     print(f"⏭️ Skipping standalone caption at block {i}")
-        #     continue
 
         
         label_group = LABEL_MAP.get(box.label) 

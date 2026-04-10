@@ -210,7 +210,7 @@ def run_sync_phase(image, boxes, ocr_engine, model, target_anchor, height, width
                         return True
     return False
 
-def extract_page_block(image, box, safe_coord, models, ocr_engine, ocr_type, boxes_on_page=None, current_idx=None, output_dir=None, page_no=None , layout_engine=None):
+def extract_page_block(image, box, safe_coord, models, ocr_engine, ocr_type, layout_engine=None):
     """Main router for individual blocks with Defensive Cropping and Visual Linking."""
     # 1. Coordinate Validation & Clipping
     img_w, img_h = image.size
