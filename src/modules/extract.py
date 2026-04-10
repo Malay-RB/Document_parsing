@@ -110,10 +110,19 @@ def run_single_page(
 
     print(f"🔍 Total detected boxes: {len(boxes)}")
 
-    safe_coords = [
-        [max(0, b.bbox[0]), max(0, b.bbox[1]), min(width, b.bbox[2]), min(height, b.bbox[3])]
-        for b in boxes
-    ]
+    PADDING = 10
+
+    safe_coords = []
+    for b in boxes:
+        x0, y0, x1, y1 = b.bbox
+
+        # 🔥 Apply padding
+        x0 = max(0, x0 - PADDING)
+        y0 = max(0, y0 - PADDING)
+        x1 = min(width, x1 + PADDING)
+        y1 = min(height, y1 + PADDING)
+
+        safe_coords.append([x0, y0, x1, y1])
 
     # ---  OCR EXTRACTION STRATEGY ---
     USE_ASYNC = ProjectConfig.STRATEGY == "ASYNC" 
