@@ -245,11 +245,11 @@ def run_pipeline(pdf_name, book_metadata, config: ProjectConfig):
 def main():
     cfg = ProjectConfig()
     book_metadata = {
-        "board_name":   "CG",
-        "standard":     "6",
-        "subject_name": "SST",
+        "board_name":   "CG",                                                            
+        "standard":     "10",
+        "subject_name": "vigyan",
     }
-    run_pipeline(pdf_name="sst6cg_15p", book_metadata=book_metadata, config=cfg)
+    run_pipeline(pdf_name="science_10_cg_test", book_metadata=book_metadata, config=cfg)
 
 
 if __name__ == "__main__":
