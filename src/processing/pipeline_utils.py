@@ -6,6 +6,29 @@ from PIL import Image, ImageOps, ImageEnhance
 from processing.logger import logger
 from config import LABEL_MAP
 
+
+def recursive_extract(image_crop, layout_engine, ocr_engine, ocr_type, depth=0, max_depth=3):
+    if depth > max_depth:
+        return ""
+
+    # run layout detection on this crop
+    inner_boxes = layout_engine.detect(image_crop)
+
+    if not inner_boxes:
+        # no sub-structure found, just OCR the whole thing
+        return ocr_engine.extract(image_crop, model=ocr_type)
+
+    # sub-boxes found — recurse into each
+    texts = []
+    for box in inner_boxes:
+        x1, y1, x2, y2 = map(int, box.bbox)
+        sub_crop = image_crop.crop((x1, y1, x2, y2))
+        text = recursive_extract(sub_crop, layout_engine, ocr_engine, ocr_type, depth + 1, max_depth)
+        if text:
+            texts.append(text)
+
+    return "\n".join(texts)
+
 # --- HELPER UTILITIES FOR INTEGRATION ---
 
 def clean_asset_name(text):
@@ -57,42 +80,80 @@ def run_internal_sweep(image, boxes, current_idx, ocr_engine, ocr_type):
                 
     return None
 
+# def run_scout_phase(image, boxes, ocr_engine, model, page_no, width, height):
+#     """Detects TOC triggers (Contents/Index) ONLY if they are the standalone text of a box."""
+#     logger.debug(f"🔍 [Scout] Using '{model}' engine for Page {page_no}")
+    
+#     if not boxes: 
+#         return False, None
+    
+#     # 1. Standard Extraction
+#     first_box = boxes[3]
+#     x1, y1, x2, y2 = map(int, first_box.bbox)
+#     crop = image.crop((max(0, x1-5), max(0, y1-5), min(width, x2+5), min(height, y2+5)))
+    
+#     header_text = ocr_engine.extract(crop, model=model).lower().strip()
+#     logger.info(f"📄 [Scout Page {page_no}] Header: '{header_text}'")
+
+#     # 2. Strict Cleaning: Remove trailing punctuation like dots or colons
+#     # This turns "Contents." or "Index:" into "contents" or "index"
+#     clean_trigger = re.sub(r'[^\w\s]', '', header_text).strip()
+
+#     # 3. Define Keywords (Lowercase for matching)
+#     TOC_KEYWORDS = [
+#     "content", "contents", "index", "table of content", "table of contents",
+#     # Hindi
+#     "सामग्री",      # content / contents
+#     "अनुक्रम",      # index / sequence
+#     "अनुक्रमणिका",  # index (formal)
+#     "सूची",         # list / index
+#     "विषय-सूची",    # table of contents (hyphenated)
+#     "विषय सूची",    # table of contents (no hyphen — OCR sometimes drops it)
+# ]
+    
+#     # 🎯 FIX: Use 'in' on the list itself for an EXACT match check
+#     if clean_trigger in TOC_KEYWORDS:
+#         logger.info(f"🎯 TRIGGER: '{header_text}' matches standalone TOC keyword on Page {page_no}.")
+#         return True, header_text
+        
+#     return False, None
+
 def run_scout_phase(image, boxes, ocr_engine, model, page_no, width, height):
     """Detects TOC triggers (Contents/Index) ONLY if they are the standalone text of a box."""
     logger.debug(f"🔍 [Scout] Using '{model}' engine for Page {page_no}")
-    
     if not boxes: 
         return False, None
-    
-    # 1. Standard Extraction
-    first_box = boxes[0]
-    x1, y1, x2, y2 = map(int, first_box.bbox)
-    crop = image.crop((max(0, x1-5), max(0, y1-5), min(width, x2+5), min(height, y2+5)))
-    
-    header_text = ocr_engine.extract(crop, model=model).lower().strip()
-    logger.info(f"📄 [Scout Page {page_no}] Header: '{header_text}'")
 
-    # 2. Strict Cleaning: Remove trailing punctuation like dots or colons
-    # This turns "Contents." or "Index:" into "contents" or "index"
-    clean_trigger = re.sub(r'[^\w\s]', '', header_text).strip()
-
-    # 3. Define Keywords (Lowercase for matching)
     TOC_KEYWORDS = [
-    "content", "contents", "index", "table of content", "table of contents",
-    # Hindi
-    "सामग्री",      # content / contents
-    "अनुक्रम",      # index / sequence
-    "अनुक्रमणिका",  # index (formal)
-    "सूची",         # list / index
-    "विषय-सूची",    # table of contents (hyphenated)
-    "विषय सूची",    # table of contents (no hyphen — OCR sometimes drops it)
-]
-    
-    # 🎯 FIX: Use 'in' on the list itself for an EXACT match check
-    if clean_trigger in TOC_KEYWORDS:
-        logger.info(f"🎯 TRIGGER: '{header_text}' matches standalone TOC keyword on Page {page_no}.")
-        return True, header_text
-        
+        "content", "contents", "index", "table of content", "table of contents",
+        # Hindi
+        "सामग्री",
+        "अनुक्रम",
+        "अनुक्रमणिका",
+        "सूची",
+        "विषय-सूची",
+        "विषय सूची",
+        "विषय- सूची",
+        "विषय -सूची",
+    ]
+
+    # FIX: check top 3 boxes instead of just boxes[0]
+    # Hindi pages often have a page number or logo detected first
+    for first_box in boxes[:3]:
+        x1, y1, x2, y2 = map(int, first_box.bbox)
+        crop = image.crop((max(0, x1-5), max(0, y1-5), min(width, x2+5), min(height, y2+5)))
+
+        header_text = ocr_engine.extract(crop, model=model).lower().strip()
+        logger.info(f"📄 [Scout Page {page_no}] Checking box: '{header_text}'")
+
+        clean_trigger = re.sub(r'\s+', ' ', re.sub(r'[^\w\s]', '', header_text)).strip()
+
+        # FIX: substring check instead of exact match
+        # handles OCR noise like trailing spaces, merged/split words
+        if any(kw in clean_trigger for kw in TOC_KEYWORDS):
+            logger.info(f"🎯 TRIGGER: '{header_text}' matches TOC keyword on Page {page_no}.")
+            return True, header_text
+
     return False, None
 
 def run_sync_phase(image, boxes, ocr_engine, model, target_anchor, height, width):
@@ -123,7 +184,7 @@ def run_sync_phase(image, boxes, ocr_engine, model, target_anchor, height, width
                         return True
     return False
 
-def extract_page_block(image, box, safe_coord, models, ocr_engine, ocr_type, boxes_on_page=None, current_idx=None, output_dir=None, page_no=None):
+def extract_page_block(image, box, safe_coord, models, ocr_engine, ocr_type, boxes_on_page=None, current_idx=None, output_dir=None, page_no=None , layout_engine=None):
     """Main router for individual blocks with Defensive Cropping and Visual Linking."""
     # 1. Coordinate Validation & Clipping
     img_w, img_h = image.size
@@ -143,13 +204,30 @@ def extract_page_block(image, box, safe_coord, models, ocr_engine, ocr_type, box
     
 
     # 3. Visual and Table handling 
+    # if group == "VISUAL":
+    #     logger.info(f"🖼️ Visual Block Detected [{box.label}]: Skipping OCR.")
+    #     return ""
+
+    # if group == "TABLE":
+    #     logger.info("📊 Table Block Detected: Skipping standard OCR.")
+    #     return ""
     if group == "VISUAL":
-        logger.info(f"🖼️ Visual Block Detected [{box.label}]: Skipping OCR.")
-        return ""
+        logger.info(f"🖼️ Visual Block Detected [{box.label}]: Running OCR.")
+        crop = image.crop((x1, y1, x2, y2))
+        crop = crop.resize((crop.width * 2, crop.height * 2))
+        text = recursive_extract(crop, layout_engine, ocr_engine, ocr_type)
+        # text = ocr_engine.extract(crop, model=ocr_type)
+        logger.info(f"✅ OCR extracted {len(text)} chars from VISUAL block.")
+        return text if isinstance(text, str) else ""
 
     if group == "TABLE":
-        logger.info("📊 Table Block Detected: Skipping standard OCR.")
-        return ""
+        logger.info(f"📊 Table Block Detected [{box.label}]: Running OCR.")
+        crop = image.crop((x1, y1, x2, y2))
+        crop = crop.resize((crop.width * 2, crop.height * 2))
+        text = recursive_extract(crop, layout_engine, ocr_engine, ocr_type)
+        # text = ocr_engine.extract(crop, model=ocr_type)
+        logger.info(f"✅ OCR extracted {len(text)} chars from TABLE block.")
+        return text if isinstance(text, str) else ""
     
     if x2 <= x1 or y2 <= y1:
         logger.warning(f"⚠️ Skipping zero-area block at {safe_coord}")

@@ -25,9 +25,9 @@ class ProjectConfig:
 
     # --- AI & EXTRACTION SETTINGS ---
     EXTRACTION_MODEL = "easy"
-    SCOUT_LIMIT = 15
+    SCOUT_LIMIT = 20
     PDF_SCALE = 4.0
-    PG_NO_STRATEGY = "FOOTER"
+    PG_NO_STRATEGY = "HEADER"
     DEBUG_MODE = True
 
     ENABLE_YAML_EXPORT  = False

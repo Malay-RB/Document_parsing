@@ -29,10 +29,9 @@ NOISE_PATTERNS = [
         re.IGNORECASE
     ),
     # Class / Grade / Standard labels  "Class 6",  "Grade VIII"
-    re.compile(
-        r'^\s*(?:class|grade|std\.?|standard)\s*[-–]?\s*(?:\d+|[ivxlIVXL]+)\s*$',
-        re.IGNORECASE
-    ),
+    re.compile(r'(?:class|grade|std\.?|standard)\s*[-–]?\s*(?:\d+|[ivxlIVXL]+)', re.IGNORECASE),
+
+
     # Chapter / Unit / Section headings
     re.compile(
         r'^\s*(?:chapter|unit|section|part|module|lesson|topic)\s*[-–]?\s*(?:\d+|[ivxlIVXL]+)',
@@ -150,7 +149,33 @@ class PageNumberPatterns:
                     return val
 
         return self._fallback_isolated(norm)        # Step 4: last resort
-
+ 
+    def extract_with_confidence(self, text: str) -> tuple[Optional[int], str]:
+        """
+        Returns (page_number, confidence) where confidence is:
+        'HIGH'   - bare number, no stripping needed
+        'MEDIUM' - number found after stripping context tokens
+        'LOW'    - fallback isolated match
+        'NONE'   - no page number found
+        """
+        if not text:
+            return None, 'NONE'
+        norm = self._normalise(text)
+        if self._is_noise(norm):
+            return None, 'NONE'
+        val = self._match_definite(norm)
+        if val is not None:
+            return val, 'HIGH'
+        stripped = self._strip_context(norm)
+        if stripped and stripped != norm:
+            if not self._is_noise(stripped):
+                val = self._match_definite(stripped)
+                if val is not None:
+                    return val, 'MEDIUM'  # ← "Science, Class-10" lands here
+        val = self._fallback_isolated(norm)
+        if val is not None:
+            return val, 'LOW'
+        return None, 'NONE'    
     # ── helpers ───────────────────────────────────────────────────────────────
 
     @staticmethod

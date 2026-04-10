@@ -142,6 +142,7 @@ def run_single_page(
             models,
             ocr_engine,
             ocr_type="easy",
+            layout_engine=layout_engine
         )
 
         # if res_content == "[SKIP_STANDALONE_CAPTION]":
@@ -151,13 +152,54 @@ def run_single_page(
         
         label_group = LABEL_MAP.get(box.label) 
 
+        # if label_group == "VISUAL":
+        #     role = "FIGURE_BLOCK"
+        #     clean_text = res_content
+        #     if clean_text:
+        #         logger.info(f"🔁 VISUAL block has extracted text — re-running classifier.")
+        #         semantic_res = classifier.classify(clean_text, layout_label=box.label)
+        #         role = semantic_res["role"]
+        #         clean_text = semantic_res["clean_text"]
+        #         logger.info(f"✅ VISUAL reclassified → role: '{role}' | text[:60]: '{clean_text[:60]}'")
+        #     else:
+        #         logger.info(f"🖼️ VISUAL block has no text — keeping as FIGURE_BLOCK.")
+
+        # elif label_group == "TABLE":
+        #     role = "TABLE_BLOCK"
+        #     clean_text = res_content
+        #     if clean_text:
+        #         logger.info(f"🔁 TABLE block has extracted text — re-running classifier.")
+        #         semantic_res = classifier.classify(clean_text, layout_label=box.label)
+        #         role = semantic_res["role"]
+        #         clean_text = semantic_res["clean_text"]
+        #         logger.info(f"✅ TABLE reclassified → role: '{role}' | text[:60]: '{clean_text[:60]}'")
+        #     else:
+        #         logger.info(f"📊 TABLE block has no text — keeping as TABLE_BLOCK.")
+
         if label_group == "VISUAL":
             role = "FIGURE_BLOCK"
-            clean_text = ""
+            clean_text = res_content
+            if clean_text:
+                logger.info(f"🔁 VISUAL block has extracted text — re-running classifier.")
+                semantic_res = classifier.classify(clean_text, layout_label=box.label)
+                role = semantic_res["role"]
+                clean_text = semantic_res["clean_text"]
+                logger.info(f"✅ VISUAL reclassified → role: '{role}' | text[:60]: '{clean_text[:60]}'")
+            else:
+                logger.info(f"🖼️ VISUAL block has no text — keeping as FIGURE_BLOCK.")
+
         elif label_group == "TABLE":
-            # 🎯 Tables now follow the visual extraction flow
             role = "TABLE_BLOCK"
-            clean_text = ""
+            clean_text = res_content
+            if clean_text:
+                logger.info(f"🔁 TABLE block has extracted text — re-running classifier.")
+                semantic_res = classifier.classify(clean_text, layout_label=box.label)
+                role = semantic_res["role"]
+                clean_text = semantic_res["clean_text"]
+                logger.info(f"✅ TABLE reclassified → role: '{role}' | text[:60]: '{clean_text[:60]}'")
+            else:
+                logger.info(f"📊 TABLE block has no text — keeping as TABLE_BLOCK.")
+
         elif label_group == "MATH":
             role = "EQUATION"
             clean_text = res_content
@@ -466,7 +508,7 @@ def run_deep_extraction(pdf_filename, input_path=None, output_path=None, start_p
 if __name__ == "__main__":
     setup_logger(debug_mode=True)
     cfg = ProjectConfig()
-    TARGET = "test_tn_10"
+    TARGET = "science_10_cg_test"
     
     all_blocks = []
     caught_files = {}
