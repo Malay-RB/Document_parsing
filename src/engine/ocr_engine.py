@@ -1,3 +1,5 @@
+#Document_parsing\src\engine\ocr_engine.py
+
 import numpy as np
 import PIL.Image as Image
 from processing.logger import logger
@@ -6,7 +8,7 @@ import re
 class OCREngine:
     def __init__(self, recognition_predictor, detection_predictor, 
                  rapid_text_engine=None, rapid_latex_engine=None, 
-                 easyocr_reader=None):
+                 easyocr_reader=None , pix2text_engine=None):
         # Surya Models
         self.recognition_predictor = recognition_predictor
         self.detection_predictor = detection_predictor
@@ -19,6 +21,9 @@ class OCREngine:
         self.easyocr = easyocr_reader
 
         self.pdf_page_obj = None
+
+        # pix2text
+        self.pix2text = pix2text_engine
 
         
     
@@ -92,6 +97,20 @@ class OCREngine:
                 text = cropped_page.extract_text()
                 return text.strip() if text else ""
             return ""
+        
+        # --- CASE 4: PIX2TEXT ---
+        elif model == "pix2text":
+            if not self.pix2text:
+                logger.error("Pix2Text engine not initialized.")
+                return ""
+            try:
+                # pix2text expects a file path or PIL image; it returns a list of dicts
+                result = self.pix2text.recognize_text_formula(pil_crop)
+                # Each dict has keys: 'type' ('text' or 'formula') and 'text'
+                return " ".join(item["text"] for item in result if item.get("text"))
+            except Exception as e:
+                logger.error(f"Pix2Text extraction failed: {e}")
+                return ""
 
         # No valid mode selected or engine missing
         return ""

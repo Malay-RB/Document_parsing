@@ -4,34 +4,12 @@ import numpy as np
 import PIL.ImageOps
 from PIL import Image, ImageOps, ImageEnhance
 from processing.logger import logger
-from config import LABEL_MAP
+from config import LABEL_MAP , ProjectConfig
 import asyncio
 import time
 from concurrent.futures import ThreadPoolExecutor
 
 
-def recursive_extract(image_crop, layout_engine, ocr_engine, ocr_type, depth=0, max_depth=3):
-    if depth > max_depth:
-        return ""
-
-    # run layout detection on this crop
-    inner_boxes = layout_engine.detect(image_crop)
-
-    if not inner_boxes:
-        # no sub-structure found, just OCR the whole thing
-        return ocr_engine.extract(image_crop, model=ocr_type)
-
-    # sub-boxes found — recurse into each
-    texts = []
-    for box in inner_boxes:
-        x1, y1, x2, y2 = map(int, box.bbox)
-        sub_crop = image_crop.crop((x1, y1, x2, y2))
-        text = recursive_extract(sub_crop, layout_engine, ocr_engine, ocr_type, depth + 1, max_depth)
-        if text:
-            texts.append(text)
-
-    return "\n".join(texts)
-
 
 def recursive_extract(image_crop, layout_engine, ocr_engine, ocr_type, depth=0, max_depth=3):
     if depth > max_depth:
@@ -55,6 +33,64 @@ def recursive_extract(image_crop, layout_engine, ocr_engine, ocr_type, depth=0, 
 
     return "\n".join(texts)
 
+
+# def recursive_extract_math(image_crop, layout_engine, ocr_engine, ocr_type, 
+#                            models, depth=0, max_depth=3):
+#     if depth > max_depth:
+#         return ""
+
+#     # Guard: no layout engine, go straight to RapidLatex
+#     if layout_engine is None:
+#         return p2t_math_extract(image_crop, models)
+
+#     inner_boxes = layout_engine.detect(image_crop)
+
+#     if not inner_boxes:
+#         # Base case — single equation, RapidLatex handles this well
+#         return p2t_math_extract(image_crop, models)
+
+#     texts = []
+#     for box in inner_boxes:
+#         x1, y1, x2, y2 = map(int, box.bbox)
+#         sub_crop = image_crop.crop((x1, y1, x2, y2))
+#         text = recursive_extract_math(sub_crop, layout_engine, ocr_engine, ocr_type,
+#                                       models, depth + 1, max_depth)
+#         if text:
+#             texts.append(text)
+
+#     # Double newline — preserves equation separation clearly
+#     return "\n\n".join(texts)
+
+
+def _rapid_latex_extract(image_crop, models):
+    """Terminal call — single equation crop into RapidLatex."""
+    try:
+        img_arr = np.array(image_crop)
+
+        if img_arr.size == 0 or np.ptp(img_arr) == 0:
+            return "[EMPTY_MATH_BLOCK]"
+
+        res = models.rapid_latex_engine(img_arr)
+        return res[0] if isinstance(res, tuple) else str(res)
+
+    except Exception as e:
+        logger.error(f"❌ RapidLatex recursive extract error: {e}")
+        return "[MATH_PROCESSING_ERROR]"
+
+def p2t_math_extract(image_crop, models, ocr_engine=None):
+    """Terminal math extractor — uses Pix2Text (primary) or RapidLatex (fallback)."""
+    engine = getattr(ProjectConfig, "MATH_ENGINE", "rapid")
+
+    if engine == "pix2text" and ocr_engine is not None:
+        try:
+            result = ocr_engine.extract(image_crop, model="pix2text")
+            if result:
+                logger.info(f"✅ Pix2Text math extracted {len(result)} chars.")
+                return result
+        except Exception as e:
+            logger.warning(f"⚠️ Pix2Text failed, falling back to RapidLatex: {e}")
+
+    return _rapid_latex_extract(image_crop, models)
 # --- HELPER UTILITIES FOR INTEGRATION ---
 
 def clean_asset_name(text):
@@ -265,19 +301,23 @@ def extract_page_block(image, box, safe_coord, models, ocr_engine, ocr_type, lay
     crop = PIL.ImageOps.autocontrast(image.crop((x1, y1, x2, y2)))
 
     # 6. MATH ROUTING (With Exception Handling)
+# 6. MATH ROUTING (With Exception Handling)
     if group == "MATH":
-        logger.debug("📐 Math Block detected. Routing to RapidLatex...")
+        logger.debug(":triangular_ruler: Math Block detected. Routing to Pix2Text...")
         try:
             img_arr = np.array(crop)
-            
+
             # Final check for empty array or uniform color (prevents division by zero warning)
             if img_arr.size == 0 or np.ptp(img_arr) == 0:
                 return "[EMPTY_MATH_BLOCK]"
-                
-            res = models.rapid_latex_engine(img_arr)
-            return res[0] if isinstance(res, tuple) else str(res)
+
+            # res = models.rapid_latex_engine(img_arr)
+            # return res[0] if isinstance(res, tuple) else str(res)
+            result = p2t_math_extract(crop, models, ocr_engine=ocr_engine)
+            return result
+        
         except Exception as e:
-            logger.error(f"❌ RapidLatex engine crash avoided: {e}")
+            logger.error(f":x: Pix2Text engine crash avoided: {e}")
             return "[MATH_PROCESSING_ERROR]"
 
     # 7. TEXT ROUTING

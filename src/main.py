@@ -11,7 +11,7 @@ from modules.scout_sync import run_scout_sync
 from modules.toc_extractor import TOCProcessorAPI
 from processing.toc_patterns import patch_toc_processor
 from modules.extract import run_deep_extraction
-from exporters.drive_upload import upload_to_drive
+# from exporters.drive_upload import upload_to_drive
 from config import ProjectConfig
 from modules.yaml_exporter import convert_json_to_yaml
 
@@ -249,7 +249,7 @@ def main():
         "standard":     "10",
         "subject_name": "vigyan",
     }
-    run_pipeline(pdf_name="science_10_cg_test", book_metadata=book_metadata, config=cfg)
+    run_pipeline(pdf_name="TN_Class_10_Maths_4p", book_metadata=book_metadata, config=cfg)
 
 
 if __name__ == "__main__":

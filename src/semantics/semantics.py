@@ -1,3 +1,5 @@
+#Document_parsing\src\semantics\semantics.py
+
 import re
 from config import SEMANTIC_PATTERNS
 from processing.page_no_patterns import PageNumberPatterns
