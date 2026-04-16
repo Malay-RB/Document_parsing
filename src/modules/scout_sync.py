@@ -10,7 +10,7 @@ from loaders.model_loader import ModelLoader
 from loaders.pdf_loader import PDFLoader
 from engine.layout_engine import LayoutEngine
 from engine.ocr_engine import OCREngine
-from modules.toc_extractor import TOCProcessorAPI
+from modules.toc_extractor import TOCProcessor
 from processing.pipeline_utils import run_scout_phase, run_sync_phase
 from processing.optimize_layout import filter_overlapping_boxes, get_unified_sorting
 from exporters.exporter import PDFDebugExporter
@@ -23,9 +23,7 @@ from processing.toc_patterns import patch_toc_processor
 
 @track_performance
 def run_scout_sync(pdf_name, input_path=None, output_path=None, models=None, config=None, force_prod=False):
-    """
-    Optimized Scout & Sync module with Auto-Environment Detection.
-    """
+
     debug_mode = ProjectConfig.DEBUG_MODE
 
     # 1. CONFIGURATION RESOLUTION
@@ -73,8 +71,8 @@ def run_scout_sync(pdf_name, input_path=None, output_path=None, models=None, con
     )
     
     # Pass both engines and injected models
-    toc_api = TOCProcessorAPI(ocr_engine=ocr_engine, models=models)
-    patch_toc_processor(toc_api)
+    toc = TOCProcessor(ocr_engine=ocr_engine, models=models)
+    patch_toc_processor(toc)
 
     state = {
         "hierarchy_data": [],
@@ -96,7 +94,7 @@ def run_scout_sync(pdf_name, input_path=None, output_path=None, models=None, con
             
             # Detect Layout
             raw_boxes = layout_engine.detect(image)
-            boxes = get_unified_sorting(filter_overlapping_boxes(raw_boxes, 0.5), 40)
+            boxes = get_unified_sorting(filter_overlapping_boxes(raw_boxes))
 
             # --- PHASE 1: SCOUT (Keyword Detection) ---
             if not state["is_discovering_toc"]:
@@ -109,7 +107,7 @@ def run_scout_sync(pdf_name, input_path=None, output_path=None, models=None, con
                     state["scout_images"].append(draw_layout(image, boxes))
                     
                     # PROBE: Identify Anchor text (e.g., Chapter 1 title)
-                    probe_results, debug_frames = toc_api.run_api([image], debug=debug_mode, model=ProjectConfig.TOC_EXTRACTION_MODEL)
+                    probe_results, debug_frames = toc.toc_run_module([image], debug=debug_mode, model=ProjectConfig.TOC_EXTRACTION_MODEL)
                     if debug_frames: 
                         state["debug_images"].extend(debug_frames)
 
@@ -179,16 +177,13 @@ def run_scout_sync(pdf_name, input_path=None, output_path=None, models=None, con
         if final_toc_pages:
             try:
                 toc_images = [pdf_loader.load_page(p_no) for p_no in final_toc_pages]
-                full_hierarchy, _ = toc_api.run_api(toc_images, debug=debug_mode, model=ProjectConfig.TOC_EXTRACTION_MODEL)
+                full_hierarchy, _ = toc.run_module(toc_images, debug=debug_mode, model=ProjectConfig.TOC_EXTRACTION_MODEL)
             except Exception as e:
                 logger.error(f"❌ Full TOC extraction failed: {e}. Using probe data fallback.")
 
         # Build the final report
         tracking_report = {
-            "pdf_filename": pdf_name,
-            "toc_pages": final_toc_pages,
             "content_start_page": content_start, # Tell Main.py where to start deep extraction
-            "anchor_used": state["target_anchor"],
             "hierarchy": full_hierarchy 
         }
 

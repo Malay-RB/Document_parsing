@@ -24,7 +24,7 @@ from processing.toc_patterns import patch_toc_processor
 from config import ProjectConfig
 
 
-class TOCProcessorAPI:
+class TOCProcessor:
     def __init__(self, ocr_engine=None, models = None):
         # Auto-detect hardware
         device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -100,7 +100,7 @@ class TOCProcessorAPI:
         text = re.sub(r'\s{2,}', ' ', text)
         return text.strip()
 
-    def run_api(self, toc_images, debug=True, model=ProjectConfig.TOC_EXTRACTION_MODEL):
+    def toc_run_module(self, toc_images, debug=True, model=ProjectConfig.TOC_EXTRACTION_MODEL):
         print(f"\n:book: [TOC_PROCESS] Extracting structure using {model.upper()}...")
         raw_output = []
         debug_frames = []
@@ -285,10 +285,10 @@ def run_standalone_toc(pdf_filename, page_list=None):
     for p in page_list:
         images.append(loader.load_page(p))
 
-    # Run API
-    api = TOCProcessorAPI()
-    patch_toc_processor(api)
-    results , debug_images  = api.run_api(images, debug=ProjectConfig.DEBUG_MODE, model=ProjectConfig.TOC_EXTRACTION_MODEL)
+    # Run TOC processor
+    toc = TOCProcessor()
+    patch_toc_processor(toc)
+    results , debug_images  = toc.toc_run_module(images, debug=ProjectConfig.DEBUG_MODE, model=ProjectConfig.TOC_EXTRACTION_MODEL)
 
     # Final Export
     with open(json_out, "w", encoding="utf-8") as f:
@@ -319,7 +319,7 @@ def run_standalone_toc(pdf_filename, page_list=None):
 
 if __name__ == "__main__":
     # SETTINGS:
-    FILENAME = "Ncert_class_9_toc"       # The .pdf name in your input folder
+    FILENAME = "CG_Class_9_Math_toc"       # The .pdf name in your input folder
     PAGES = None         # Set to None if your PDF is already cropped to TOC only
 
     run_standalone_toc(FILENAME, page_list=PAGES)

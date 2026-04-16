@@ -23,7 +23,8 @@ from processing.performance_track import track_performance
 from semantics.semantics import SemanticClassifier, ContextTracker ,transform_structure
 from processing.logger import logger, setup_logger
 from config import LABEL_MAP, ProjectConfig 
-from processing.pipeline_utils import batch_extract_surya_async
+from processing.pipeline_utils import extract_block_surya, extract_page_manual_concurrency
+
 
 
 @track_performance
@@ -125,17 +126,25 @@ def run_single_page(
         safe_coords.append([x0, y0, x1, y1])
 
     # ---  OCR EXTRACTION STRATEGY ---
-    USE_ASYNC = ProjectConfig.STRATEGY == "ASYNC" 
+    USE_ASYNC = ProjectConfig.STRATEGY
 
-    if USE_ASYNC:
+    if USE_ASYNC == "ASYNC_SURYA":
         # Batch extract all blocks at once using Surya's GPU/Thread batching
-        extracted_texts = asyncio.run(batch_extract_surya_async(image, boxes, safe_coords, models, ocr_engine))
-    else:
+        extracted_texts = asyncio.run(extract_block_surya(image, boxes, safe_coords, models, ocr_engine))
+
+
+    elif USE_ASYNC == "ASYNC_UNIVERSAL":
+        # 🚀 NEW: Manual Concurrency (Works for Surya, EasyOCR, and Recursive Tables)
+        extracted_texts = asyncio.run(extract_page_manual_concurrency(
+            image, boxes, safe_coords, models, ocr_engine, layout_engine, ocr_type="surya"
+        ))
+
+    elif USE_ASYNC == "SYNC":
         extracted_texts = []
         sync_start = time.perf_counter()
         for i, (box, coord) in enumerate(zip(boxes, safe_coords)):
             # Sequential extraction
-            text = extract_page_block(image, box, coord, models, ocr_engine, ocr_type="surya", layout_engine=layout_engine)
+            text = extract_page_block(image, box, coord, models, ocr_engine, ocr_type=ProjectConfig.EXTRACTION_MODEL, layout_engine=layout_engine)
             extracted_texts.append(text)
         
         sync_duration = time.perf_counter() - sync_start
@@ -181,30 +190,6 @@ def run_single_page(
 
         
         label_group = LABEL_MAP.get(box.label) 
-
-        # if label_group == "VISUAL":
-        #     role = "FIGURE_BLOCK"
-        #     clean_text = res_content
-        #     if clean_text:
-        #         logger.info(f"🔁 VISUAL block has extracted text — re-running classifier.")
-        #         semantic_res = classifier.classify(clean_text, layout_label=box.label)
-        #         role = semantic_res["role"]
-        #         clean_text = semantic_res["clean_text"]
-        #         logger.info(f"✅ VISUAL reclassified → role: '{role}' | text[:60]: '{clean_text[:60]}'")
-        #     else:
-        #         logger.info(f"🖼️ VISUAL block has no text — keeping as FIGURE_BLOCK.")
-
-        # elif label_group == "TABLE":
-        #     role = "TABLE_BLOCK"
-        #     clean_text = res_content
-        #     if clean_text:
-        #         logger.info(f"🔁 TABLE block has extracted text — re-running classifier.")
-        #         semantic_res = classifier.classify(clean_text, layout_label=box.label)
-        #         role = semantic_res["role"]
-        #         clean_text = semantic_res["clean_text"]
-        #         logger.info(f"✅ TABLE reclassified → role: '{role}' | text[:60]: '{clean_text[:60]}'")
-        #     else:
-        #         logger.info(f"📊 TABLE block has no text — keeping as TABLE_BLOCK.")
 
         if label_group == "VISUAL":
             role = "FIGURE_BLOCK"
@@ -508,7 +493,7 @@ def run_deep_extraction(pdf_filename, input_path=None, output_path=None, start_p
 if __name__ == "__main__":
     setup_logger(debug_mode=True)
     cfg = ProjectConfig()
-    TARGET = "science_10_cg_test"
+    TARGET = "real_numbers"
     
     all_blocks = []
     caught_files = {}

@@ -9,30 +9,6 @@ import asyncio
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-
-def recursive_extract(image_crop, layout_engine, ocr_engine, ocr_type, depth=0, max_depth=3):
-    if depth > max_depth:
-        return ""
-
-    # run layout detection on this crop
-    inner_boxes = layout_engine.detect(image_crop)
-
-    if not inner_boxes:
-        # no sub-structure found, just OCR the whole thing
-        return ocr_engine.extract(image_crop, model=ocr_type)
-
-    # sub-boxes found — recurse into each
-    texts = []
-    for box in inner_boxes:
-        x1, y1, x2, y2 = map(int, box.bbox)
-        sub_crop = image_crop.crop((x1, y1, x2, y2))
-        text = recursive_extract(sub_crop, layout_engine, ocr_engine, ocr_type, depth + 1, max_depth)
-        if text:
-            texts.append(text)
-
-    return "\n".join(texts)
-
-
 def recursive_extract(image_crop, layout_engine, ocr_engine, ocr_type, depth=0, max_depth=3):
     if depth > max_depth:
         return ""
@@ -72,77 +48,7 @@ def clean_asset_name(text):
     clean = re.sub(r'[^a-zA-Z0-9\s]', '', text)
     return "_".join(clean.replace("\n", " ").split()[:5]).lower()
 
-def run_internal_sweep(image, boxes, current_idx, ocr_engine, ocr_type):
-    """
-    Sweeps nearby blocks to find a 'Caption' for a detected Figure/Table.
-    Looks at 2 blocks before and 2 blocks after.
-    """
-    sweep_indices = [current_idx + 1, current_idx - 1, current_idx + 2, current_idx - 2]
-    
-    for idx in sweep_indices:
-        if 0 <= idx < len(boxes):
-            candidate = boxes[idx]
-            
-            # ✅ FIX: Use LABEL_MAP same as outer pipeline, not raw label string
-            candidate_group = LABEL_MAP.get(candidate.label)
-            
-            if candidate_group == "CAPTION":  # match whatever string LABEL_MAP returns for captions
-                logger.debug(f"🎯 [Sweep] Found Caption at index {idx} (raw label: '{candidate.label}') for block {current_idx}")
-                
-                c_x1, c_y1, c_x2, c_y2 = map(int, candidate.bbox)
-                pad = 15
-                crop_coords = (
-                    max(0, c_x1 - pad), 
-                    max(0, c_y1 - pad), 
-                    min(image.width, c_x2 + pad), 
-                    min(image.height, c_y2 + pad)
-                )
-                
-                cap_crop = image.crop(crop_coords)
-                cap_crop = PIL.ImageOps.autocontrast(cap_crop)
-                
-                caption_text = ocr_engine.extract(cap_crop, model=ocr_type)
-                return caption_text if isinstance(caption_text, str) else ""
-                
-    return None
 
-# def run_scout_phase(image, boxes, ocr_engine, model, page_no, width, height):
-#     """Detects TOC triggers (Contents/Index) ONLY if they are the standalone text of a box."""
-#     logger.debug(f"🔍 [Scout] Using '{model}' engine for Page {page_no}")
-    
-#     if not boxes: 
-#         return False, None
-    
-#     # 1. Standard Extraction
-#     first_box = boxes[3]
-#     x1, y1, x2, y2 = map(int, first_box.bbox)
-#     crop = image.crop((max(0, x1-5), max(0, y1-5), min(width, x2+5), min(height, y2+5)))
-    
-#     header_text = ocr_engine.extract(crop, model=model).lower().strip()
-#     logger.info(f"📄 [Scout Page {page_no}] Header: '{header_text}'")
-
-#     # 2. Strict Cleaning: Remove trailing punctuation like dots or colons
-#     # This turns "Contents." or "Index:" into "contents" or "index"
-#     clean_trigger = re.sub(r'[^\w\s]', '', header_text).strip()
-
-#     # 3. Define Keywords (Lowercase for matching)
-#     TOC_KEYWORDS = [
-#     "content", "contents", "index", "table of content", "table of contents",
-#     # Hindi
-#     "सामग्री",      # content / contents
-#     "अनुक्रम",      # index / sequence
-#     "अनुक्रमणिका",  # index (formal)
-#     "सूची",         # list / index
-#     "विषय-सूची",    # table of contents (hyphenated)
-#     "विषय सूची",    # table of contents (no hyphen — OCR sometimes drops it)
-# ]
-    
-#     # 🎯 FIX: Use 'in' on the list itself for an EXACT match check
-#     if clean_trigger in TOC_KEYWORDS:
-#         logger.info(f"🎯 TRIGGER: '{header_text}' matches standalone TOC keyword on Page {page_no}.")
-#         return True, header_text
-        
-#     return False, None
 
 def run_scout_phase(image, boxes, ocr_engine, model, page_no, width, height):
     """Detects TOC triggers (Contents/Index) ONLY if they are the standalone text of a box."""
@@ -292,7 +198,36 @@ def extract_page_block(image, box, safe_coord, models, ocr_engine, ocr_type, lay
         return ""
     
 
-async def batch_extract_surya_async(image, boxes, coords, models, ocr_engine):
+def _surya_inference(models, crops):
+    return models.recognition_predictor(
+        list(crops),
+        det_predictor=models.detection_predictor
+    )
+
+
+async def run_surya_batch(models, crops):
+   
+    loop = asyncio.get_event_loop()
+
+    try:
+        logger.info(f"🧵 [THREAD] Relinquishing main thread control to background executor...")
+
+        predictions = await loop.run_in_executor(
+            None,
+            _surya_inference,
+            models,
+            crops
+        )
+
+        logger.info(f"📥 [RECEIVE] Executor returned results for {len(predictions)} blocks.")
+        return predictions
+
+    except Exception as e:
+        logger.error(f"❌ [CRASH] OCR Predictor failed: {e}")
+        raise e
+
+
+async def extract_block_surya(image, boxes, coords, models, ocr_engine):
     """
     images = single page as image from the pdf
     boxes = label, confidence, bbox
@@ -302,19 +237,18 @@ async def batch_extract_surya_async(image, boxes, coords, models, ocr_engine):
     """
     start_time = time.perf_counter()
     results = [None] * len(boxes)
-    surya_tasks = [] # (original_index, PIL_crop)
+    surya_tasks = []  # (original_index, PIL_crop)
 
     logger.info(f"🚀 [ASYNC START] Preparing to process {len(boxes)} blocks.")
-    
+
+    # assigning and execution of blocks
     for i, (box, coord) in enumerate(zip(boxes, coords)):
         group = LABEL_MAP.get(box.label, "TEXT")
-        
-        # Safety: Skip Visuals/Tables and route Math elsewhere if needed
         if group in ["VISUAL", "TABLE"]:
             results[i] = ""
             logger.debug(f"⏩ [SKIP] Block {i} is {group}. No OCR required.")
             continue
-            
+
         if group == "MATH":
             logger.info(f"📐 [MATH] Block {i} identified as MATH. Processing immediately via Rapid...")
             crop = image.crop(coord)
@@ -330,23 +264,15 @@ async def batch_extract_surya_async(image, boxes, coords, models, ocr_engine):
         logger.warning("⚠️ [ASYNC] No Surya-compatible blocks found on this page.")
         return results
 
+    # Batch preparation for extraction using surya
     indices, crops = zip(*surya_tasks)
     logger.info(f"📡 [DISPATCH] Sending batch of {len(surya_tasks)} blocks to GPU/CPU Executor.")
-    
+
     ocr_start = time.perf_counter()
-    
-    # We wrap the blocking predictor call to keep the event loop responsive
-    loop = asyncio.get_event_loop()
+
     try:
-        # Tracking the thread hand-off
-        logger.info(f"🧵 [THREAD] Relinquishing main thread control to background executor...")
-        
-        predictions = await loop.run_in_executor(
-            None, 
-            lambda: models.recognition_predictor(list(crops), det_predictor=models.detection_predictor)
-        )
-        
-        logger.info(f"📥 [RECEIVE] Executor returned results for {len(predictions)} blocks.")
+        predictions = await run_surya_batch(models, crops)
+
     except Exception as e:
         logger.error(f"❌ [CRASH] OCR Predictor failed: {e}")
         raise e
@@ -366,5 +292,39 @@ async def batch_extract_surya_async(image, boxes, coords, models, ocr_engine):
 
     total_duration = time.perf_counter() - start_time
     logger.info(f"⏱️  [SURYA BATCH] {len(surya_tasks)} blocks | Total: {total_duration:.3f}s | OCR: {ocr_duration:.3f}s")
+
+    return results
+
+async def extract_page_manual_concurrency(image, boxes, coords, models, ocr_engine, layout_engine, ocr_type):
+
+    start_time = time.perf_counter()
+    loop = asyncio.get_event_loop()
     
+    max_workers = 4 if "cuda" in str(getattr(models.recognition_predictor, 'device', 'cpu')) else os.cpu_count()
+    
+    logger.info(f"⚡ [UNIVERSAL ASYNC] Launching pool with {max_workers} workers for {len(boxes)} blocks.")
+
+    tasks = []
+    # We use a ThreadPoolExecutor to run the synchronous 'extract_page_block' in parallel
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        for i, (box, coord) in enumerate(zip(boxes, coords)):
+            # Each block is scheduled as an individual task
+            task = loop.run_in_executor(
+                executor,
+                extract_page_block,
+                image, 
+                box, 
+                coord, 
+                models, 
+                ocr_engine, 
+                ocr_type, 
+                layout_engine
+            )
+            tasks.append(task)
+
+        # Fire all tasks and wait for them to finish
+        results = await asyncio.gather(*tasks)
+
+    duration = time.perf_counter() - start_time
+    logger.info(f"⏱️  [UNIVERSAL ASYNC] Completed {len(boxes)} blocks in {duration:.3f}s")
     return results

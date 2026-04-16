@@ -9,7 +9,7 @@ _PNP = PageNumberPatterns()
 def _extract_page_val(p_text, classifier, context_label):
     """Helper to try multiple ways to find a number in text."""
     if not p_text:
-        return None ,
+        return None
         
     # #1. Direct Leading Number (NCERT Style: '122 Chapter Title')
     # #number_match = re.match(r'^(\d+)', p_text)
