@@ -19,7 +19,7 @@ AUTO_STATE = {
 def _extract_page_val(p_text, classifier, context_label):
     """Helper to try multiple ways to find a number in text."""
     if not p_text:
-        return None 
+        return None ,
         
     # #1. Direct Leading Number (NCERT Style: '122 Chapter Title')
     # #number_match = re.match(r'^(\d+)', p_text)
@@ -36,12 +36,12 @@ def _extract_page_val(p_text, classifier, context_label):
     # 2. Semantic Classification (Regex/Context)
     res = classifier.classify(p_text)
     if res.get("role") == "PAGE_NUMBER":
-        logger.info(f"🔢 Classified Page Number: {res['page_number']} from '{p_text}'")
+        logger.info(f"🔢 Classified Page Number: {res['page_number']} from '{p_text}'({context_label})")
         return res["page_number"]
         
     return None
 
-def _detect_from_header(image, boxes, safe_coords, ocr_engine, classifier, ocr_type, height):
+def _detect_from_header(image, boxes, safe_coords, ocr_engine, classifier, ocr_type):
     # Check first 3 boxes 
     for i, box in enumerate(boxes[:3]):
         label = getattr(box, 'label', None) 
@@ -64,7 +64,7 @@ def _detect_from_header(image, boxes, safe_coords, ocr_engine, classifier, ocr_t
             return val
     return None
 
-def _detect_from_footer(image, boxes, safe_coords, ocr_engine, classifier, ocr_type, height):
+def _detect_from_footer(image, boxes, safe_coords, ocr_engine, classifier, ocr_type):
     # DEBUG: Diagnostic info for footers
     logger.debug("🔍 Checking Footer: Targeting last 4 blocks.")
     
@@ -120,7 +120,7 @@ def _detect_from_corners(image, boxes, safe_coords, ocr_engine, classifier, ocr_
 def find_printed_page_no(image, boxes, safe_coords, ocr_engine, classifier, ocr_type, height, strategy="AUTO"):
     logger.debug(f"🛠️  Pagination Strategy: {strategy}")
 
-    if strategy == "HEADER":
+    if pg_no_strategy== "HEADER":
         return _detect_from_header(image, boxes, safe_coords, ocr_engine, classifier, ocr_type, height)
 
     elif strategy == "FOOTER":

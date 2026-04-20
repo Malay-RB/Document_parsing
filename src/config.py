@@ -24,16 +24,16 @@ class ProjectConfig:
     TEST_OUTPUT = os.path.join(BASE_STR, "tests", "test_output")
 
     # --- AI & EXTRACTION SETTINGS ---
-    TOC_EXTRACTION_MODEL = "easy"
+    TOC_EXTRACTION_MODEL = "surya"
     EXTRACTION_MODEL = "easy"
-    SCOUT_LIMIT = 20
+    SCOUT_LIMIT = 25
     PDF_SCALE = 4.0
     PG_NO_STRATEGY = "HEADER"
     DEBUG_MODE = True
 
     ENABLE_YAML_EXPORT  = False
 
-    STRATEGY = "ASYNC"
+    STRATEGY = "SYNC"
 
     # ------Drive Upload------
     ENABLE_DRIVE_SYNC = False

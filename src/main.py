@@ -8,10 +8,8 @@ from loaders.pdf_loader import PDFLoader
 from loaders.model_loader import ModelLoader
 
 from modules.scout_sync import run_scout_sync
-from modules.toc_extractor import TOCProcessorAPI
 from processing.toc_patterns import patch_toc_processor
 from modules.extract import run_deep_extraction
-from exporters.drive_upload import upload_to_drive
 from config import ProjectConfig
 from modules.yaml_exporter import convert_json_to_yaml
 
@@ -29,16 +27,12 @@ def format_runtime(seconds: float) -> str:
 
 
 def run_pipeline(pdf_name, book_metadata, config: ProjectConfig):
-    """
-    Main Orchestrator.
-    Handles memory-safe extraction, hierarchy building, asset linking,
-    and dual-mode Google Drive Sync.
-    """
+    
     start_time = time.perf_counter()
     debug_mode = config.DEBUG_MODE
 
     in_path, out_path = config.get_active_paths(force_prod=True)
-    setup_logger(debug_mode=config.DEBUG_MODE)
+    setup_logger(debug_mode=config.DEBUG_MODE) #logger Initialization
 
     logger.info(":brain: Initializing Global AI Brain...")
     shared_models = ModelLoader().load()
@@ -152,39 +146,15 @@ def run_pipeline(pdf_name, book_metadata, config: ProjectConfig):
 
     # ── Pipeline ────────────────────────────────────────────────────────
     try:
-        # PHASE 1 & 2: Scout & Sync
+        # PHASE 1: Scout & Sync & TOC preperation
         sync_results   = run_scout_sync(pdf_name=pdf_name, models=shared_models,
                                         config=config, force_prod=True)
         hierarchy      = sync_results.get("hierarchy", []) if sync_results else []
         physical_start = sync_results.get("content_start_page") if sync_results else None
-        toc_pages      = sync_results.get("toc_pages", []) if sync_results else []
 
-        # Anchor fallback
-        if not physical_start:
-            logger.warning("⚠️ Anchor missing. Running 5-page window fallback.")
-            scan_start   = toc_pages[0] if toc_pages else 1
-            fallback_range = list(range(scan_start, scan_start + 5))
+        # --- PHASE 2: DEEP EXTRACTION ---
+        logger.info(f"🎓 Step 2: Starting Deep Extraction...")
 
-            logger.info(f"📂 Fallback: Extracting TOC from pages {fallback_range}")
-            
-            loader = PDFLoader(scale=config.PDF_SCALE)
-            loader.open(full_pdf_path)
-            total_pages  = loader.get_total_pages()
-            valid_range  = [p for p in fallback_range if p <= total_pages]
-            fallback_imgs = [loader.load_page(p) for p in valid_range]
-            
-            toc_api = TOCProcessorAPI(models=shared_models)
-            patch_toc_processor(toc_api)
-            hierarchy, _ = toc_api.run_api(fallback_imgs, debug=debug_mode, model=ProjectConfig.TOC_EXTRACTION_MODEL)
-            loader.close()
-            physical_start = scan_start + 5
-            logger.info(f"🎯 Fallback set. Starting Deep Extraction at Page {physical_start}")
-
-
-        # --- PHASE 3: DEEP EXTRACTION ---
-        logger.info(f"🎓 Step 3: Starting Deep Extraction...")
-
-        # Initialize the generator OUTSIDE the file context
         extraction_gen = run_deep_extraction(
             pdf_filename=pdf_name,
             start_page=physical_start,
@@ -223,7 +193,7 @@ def run_pipeline(pdf_name, book_metadata, config: ProjectConfig):
 
         save_data()
 
-        # ✅ PHASES 4 & 5: Hierarchy + Asset linking
+        # ✅ PHASES 3: Hierarchy + Asset linking
         run_hierarchy_and_linking()
 
         # sync_all_to_cloud()
@@ -245,11 +215,11 @@ def run_pipeline(pdf_name, book_metadata, config: ProjectConfig):
 def main():
     cfg = ProjectConfig()
     book_metadata = {
-        "board_name":   "CG",                                                            
+        "board_name":   "CBSE",                                                            
         "standard":     "10",
-        "subject_name": "vigyan",
+        "subject_name": "Mathematics",
     }
-    run_pipeline(pdf_name="science_10_cg_test", book_metadata=book_metadata, config=cfg)
+    run_pipeline(pdf_name="ncert10M", book_metadata=book_metadata, config=cfg)
 
 
 if __name__ == "__main__":

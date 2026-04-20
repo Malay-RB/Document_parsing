@@ -66,9 +66,7 @@ def filter_overlapping_boxes(boxes, threshold=0.8):
     """Keep only the most relevant boxes when multiple boxes overlap."""
     if not boxes: 
         return []
-    
-    # Sort boxes by area (descending) so we keep larger containers if needed
-    # or sort by confidence if your model provides it.
+
     sorted_boxes = sorted(
         boxes,
         key=lambda b: (b.bbox[2]-b.bbox[0]) * (b.bbox[3]-b.bbox[1]),

@@ -23,7 +23,8 @@ from processing.performance_track import track_performance
 from semantics.semantics import SemanticClassifier, ContextTracker ,transform_structure
 from processing.logger import logger, setup_logger
 from config import LABEL_MAP, ProjectConfig 
-from processing.pipeline_utils import batch_extract_surya_async
+from processing.pipeline_utils import extract_block_surya, extract_page_manual_concurrency
+
 from processing.page_strategy import (
     _detect_from_header,
     _detect_from_footer,
@@ -118,6 +119,7 @@ def run_single_page(
     PADDING = 10
 
     safe_coords = []
+
     for b in boxes:
         x0, y0, x1, y1 = b.bbox
 
@@ -129,33 +131,47 @@ def run_single_page(
 
         safe_coords.append([x0, y0, x1, y1])
 
-    # ---  OCR EXTRACTION STRATEGY ---
-    USE_ASYNC = ProjectConfig.STRATEGY == "ASYNC" 
+    for i, (box, coords) in enumerate(zip(boxes, safe_coords)):
+        # 🎯 DRAW THE ACTUAL COORDINATES (safe_coords)
+        # This ensures if the padding is wrong, you see it in the debug image
+        draw.rectangle(coords, outline="red", width=3)
+        draw.text((coords[0], max(0, coords[1] - 18)), f"{i+1}:{box.label}", fill="red")
 
-    if USE_ASYNC:
+    # ---  OCR EXTRACTION STRATEGY ---
+    USE_ASYNC = ProjectConfig.STRATEGY
+
+    if USE_ASYNC == "ASYNC_SURYA":
         # Batch extract all blocks at once using Surya's GPU/Thread batching
-        extracted_texts = asyncio.run(batch_extract_surya_async(image, boxes, safe_coords, models, ocr_engine))
-    else:
+        extracted_texts = asyncio.run(extract_block_surya(image, boxes, safe_coords, models, ocr_engine))
+
+
+    elif USE_ASYNC == "ASYNC_UNIVERSAL":
+        # 🚀 NEW: Manual Concurrency (Works for Surya, EasyOCR, and Recursive Tables)
+        extracted_texts = asyncio.run(extract_page_manual_concurrency(
+            image, boxes, safe_coords, models, ocr_engine, layout_engine, ocr_type="surya"
+        ))
+
+    elif USE_ASYNC == "SYNC":
         extracted_texts = []
         sync_start = time.perf_counter()
         for i, (box, coord) in enumerate(zip(boxes, safe_coords)):
             # Sequential extraction
-            text = extract_page_block(image, box, coord, models, ocr_engine, ocr_type="surya", layout_engine=layout_engine)
+            text = extract_page_block(image, box, coord, models, ocr_engine, ocr_type=ProjectConfig.EXTRACTION_MODEL, layout_engine=layout_engine)
             extracted_texts.append(text)
         
         sync_duration = time.perf_counter() - sync_start
         print(f"⏱️  [SURYA SYNC] Processed {len(boxes)} blocks sequentially in {sync_duration:.3f}s")
 
-    # --- 3. PAGINATION ---
+    # --- PAGINATION ---
     raw_detected_no = find_printed_page_no(
             image,
             boxes,
             safe_coords,
             ocr_engine,
             classifier,
+            pg_no_strategy,
             ocr_type="easy",
-            height=height,
-            strategy=pg_no_strategy
+            height=height,            
         )
     print(f"RAW detected page: {raw_detected_no}")
 
@@ -179,7 +195,7 @@ def run_single_page(
     f"CORNERS: {corner_val}"
 )
 
-    # --- 4. BLOCK PROCESSING (Assembly & Metadata) ---
+    # --- BLOCK PROCESSING (Assembly & Metadata) ---
     page_blocks = []
 
     # We now loop through the pre-extracted texts
@@ -198,30 +214,6 @@ def run_single_page(
 
         
         label_group = LABEL_MAP.get(box.label) 
-
-        # if label_group == "VISUAL":
-        #     role = "FIGURE_BLOCK"
-        #     clean_text = res_content
-        #     if clean_text:
-        #         logger.info(f"🔁 VISUAL block has extracted text — re-running classifier.")
-        #         semantic_res = classifier.classify(clean_text, layout_label=box.label)
-        #         role = semantic_res["role"]
-        #         clean_text = semantic_res["clean_text"]
-        #         logger.info(f"✅ VISUAL reclassified → role: '{role}' | text[:60]: '{clean_text[:60]}'")
-        #     else:
-        #         logger.info(f"🖼️ VISUAL block has no text — keeping as FIGURE_BLOCK.")
-
-        # elif label_group == "TABLE":
-        #     role = "TABLE_BLOCK"
-        #     clean_text = res_content
-        #     if clean_text:
-        #         logger.info(f"🔁 TABLE block has extracted text — re-running classifier.")
-        #         semantic_res = classifier.classify(clean_text, layout_label=box.label)
-        #         role = semantic_res["role"]
-        #         clean_text = semantic_res["clean_text"]
-        #         logger.info(f"✅ TABLE reclassified → role: '{role}' | text[:60]: '{clean_text[:60]}'")
-        #     else:
-        #         logger.info(f"📊 TABLE block has no text — keeping as TABLE_BLOCK.")
 
         if label_group == "VISUAL":
             role = "FIGURE_BLOCK"
@@ -352,11 +344,11 @@ def run_single_page(
 
     print(f"✅ Finished page {page_no} with {len(page_blocks)} blocks\n")
 
-    return page_blocks, False, debug_img
+    return page_blocks, debug_img
 
 @track_performance
 def run_deep_extraction(pdf_filename, input_path=None, output_path=None, start_page=1, pg_no_strategy=None, hierarchy=None, models=None, config=None, force_prod=False):
-    """Phase 3: Iterative Deep Content Extraction with Memory-Safe Visual Debugging."""
+    
     cfg = config if config else ProjectConfig()
     
     # --- PATH SETUP ---
@@ -365,7 +357,7 @@ def run_deep_extraction(pdf_filename, input_path=None, output_path=None, start_p
     if isinstance(final_in, tuple): final_in = final_in[0]
 
     pdf_path = os.path.join(final_in, f"{pdf_filename}.pdf")
-    strategy = pg_no_strategy if pg_no_strategy else ProjectConfig.PG_NO_STRATEGY
+    pg_no_strategy = pg_no_strategy if pg_no_strategy else ProjectConfig.PG_NO_STRATEGY
 
     # 🎯 NEW: Create a book-specific subfolder for visuals
     book_visuals_dir = os.path.join(auto_out, "extracted_visuals", pdf_filename)
@@ -414,7 +406,7 @@ def run_deep_extraction(pdf_filename, input_path=None, output_path=None, start_p
     block_counter = 1
     pending_buffer = []
 
-    debug_coords_registry = [] # New: To store box metadata
+    debug_coords_registry = [] 
     box_counter_global = 1
 
 
@@ -424,7 +416,7 @@ def run_deep_extraction(pdf_filename, input_path=None, output_path=None, start_p
             image = pdf_loader.load_page(page_no)
             
             # Unpack the 3rd return value (debug_img)
-            current_page_blocks, is_ready, debug_img = run_single_page(
+            current_page_blocks, debug_img = run_single_page(
                 image, page_no, models, layout_engine, ocr_engine, 
                 classifier, strategy, hierarchy, context_tracker=context_tracker, visuals_dir = book_visuals_dir
             )
@@ -509,7 +501,8 @@ def run_deep_extraction(pdf_filename, input_path=None, output_path=None, start_p
             logger.info(f"📍 Debug Coordinates saved: {debug_coords_path}")
 
         pdf_loader.close()
-
+        
+        # Yield the final path so the orchestrator can call Drive Sync
         yield {
             "visual_pdf": final_debug_pdf,
             "coords_json": debug_coords_path
@@ -518,7 +511,7 @@ def run_deep_extraction(pdf_filename, input_path=None, output_path=None, start_p
 if __name__ == "__main__":
     setup_logger(debug_mode=True)
     cfg = ProjectConfig()
-    TARGET = "toc"
+    TARGET = "science_10_cg_test"
     
     all_blocks = []
     caught_files = {}
