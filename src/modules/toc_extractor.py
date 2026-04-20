@@ -96,7 +96,6 @@ class TOCProcessorAPI:
 
     def sanitize_title(self, text):
         text = re.sub(r'[\n\r\t]+', ' ', text)
-        text = re.sub(r'[^\w\s\-\&\(\)]', '', text, flags=re.UNICODE)
         text = re.sub(r'\s{2,}', ' ', text)
         return text.strip()
 

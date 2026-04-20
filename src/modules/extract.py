@@ -16,20 +16,25 @@ from loaders.pdf_loader import PDFLoader
 from engine.layout_engine import LayoutEngine
 from engine.ocr_engine import OCREngine
 from processing.pipeline_utils import extract_page_block
-from processing.page_strategy import find_printed_page_no
+from processing.page_strategy import find_printed_page_no , finalize_auto_strategy , AUTO_STATE
 from processing.page_no_tracker import PageNumberTracker
-from processing.optimize_layout import filter_overlapping_boxes, get_unified_sorting
+from processing.optimize_layout import filter_overlapping_boxes, get_unified_sorting 
 from processing.performance_track import track_performance
 from semantics.semantics import SemanticClassifier, ContextTracker ,transform_structure
 from processing.logger import logger, setup_logger
 from config import LABEL_MAP, ProjectConfig 
 from processing.pipeline_utils import batch_extract_surya_async
+from processing.page_strategy import (
+    _detect_from_header,
+    _detect_from_footer,
+    _detect_from_corners
+)
 
 
 @track_performance
 def run_single_page(
     image, page_no, models, layout_engine, ocr_engine, classifier,
-    pg_no_strategy, tracker, hierarchy_data, context_tracker,
+    pg_no_strategy, hierarchy_data, context_tracker,
     visuals_dir=None
 ):
     """Handles layout detection, pagination resolution, and block classification for a single page."""
@@ -154,13 +159,25 @@ def run_single_page(
         )
     print(f"RAW detected page: {raw_detected_no}")
 
-    # 🔥 NEW: just collect, don't resolve
-    tracker.process(page_no, raw_detected_no)
+
+    header_val = _detect_from_header(image, boxes, safe_coords, ocr_engine, classifier, "easy", height)
+    footer_val = _detect_from_footer(image, boxes, safe_coords, ocr_engine, classifier, "easy", height)
+    corner_val = _detect_from_corners(image, boxes, safe_coords, ocr_engine, classifier, "easy", height)
+
+    AUTO_STATE["history"]["HEADER"].append(header_val)
+    AUTO_STATE["history"]["FOOTER"].append(footer_val)
+    AUTO_STATE["history"]["CORNERS"].append(corner_val)
+    
 
     # temporary value (will be corrected later)
-    printed_no = raw_detected_no if raw_detected_no is not None else page_no
+    printed_no = raw_detected_no
 
-    print(f"📌 Printed page detected: {printed_no}")
+    print(
+    f"📌 Page Candidates → "
+    f"HEADER: {header_val} | "
+    f"FOOTER: {footer_val} | "
+    f"CORNERS: {corner_val}"
+)
 
     # --- 4. BLOCK PROCESSING (Assembly & Metadata) ---
     page_blocks = []
@@ -278,6 +295,11 @@ def run_single_page(
             "toc_link": chapter_info,
             "asset": asset_path,
             "block_index": layout_index,
+             "page_candidates": {
+        "HEADER": header_val,
+        "FOOTER": footer_val,
+        "CORNERS": corner_val
+    }
         }
         page_blocks.append(block_data)
 
@@ -385,7 +407,6 @@ def run_deep_extraction(pdf_filename, input_path=None, output_path=None, start_p
         
     )
     
-    tracker = PageNumberTracker()
     classifier = SemanticClassifier()
     context_tracker = ContextTracker()
     
@@ -405,7 +426,7 @@ def run_deep_extraction(pdf_filename, input_path=None, output_path=None, start_p
             # Unpack the 3rd return value (debug_img)
             current_page_blocks, is_ready, debug_img = run_single_page(
                 image, page_no, models, layout_engine, ocr_engine, 
-                classifier, strategy, tracker, hierarchy, context_tracker=context_tracker, visuals_dir = book_visuals_dir
+                classifier, strategy, hierarchy, context_tracker=context_tracker, visuals_dir = book_visuals_dir
             )
 
             # Append to Registry for the Coord JSON
@@ -441,47 +462,38 @@ def run_deep_extraction(pdf_filename, input_path=None, output_path=None, start_p
             for _, old_blocks in pending_buffer:
                 # 🎯 FIX: Build id_map for recovery
                 rec_id_map = { b["block_index"]: b["id"] for b in old_blocks }
-                recovered_batch = [
-                    transform_structure(b, block_index=b["block_index"], id_map=rec_id_map) 
-                    for b in old_blocks
-                ]
-                
+                recovered_batch = []
+                for b in old_blocks:
+                    transformed = transform_structure(
+                        b, block_index=b["block_index"], id_map=rec_id_map
+                    )
+                    transformed["page_candidates"] = b.get("page_candidates", {})
+                    transformed["pdf_page"] = b.get("pdf_page")
+                    recovered_batch.append(transformed)
                 yield recovered_batch
+            pending_buffer.clear()
         raise e 
 
     finally:
-        # --- FINAL DATA CLEANUP (OFFSET NEVER FOUND) ---
         if pending_buffer:
             logger.info("🔒 Finalizing offset using best streak...")
-
-            offset = tracker.finalize()
-
             for old_pdf_no, old_blocks in pending_buffer:
                 fin_id_map = { b["block_index"]: b["id"] for b in old_blocks }
-
                 final_batch = []
                 for b in old_blocks:
-                    if offset is not None:
-                        b["printed_page"] = old_pdf_no + offset
-                    else:
-                        b["printed_page"] = old_pdf_no
-
-                    final_batch.append(
-                        transform_structure(
-                            b,
-                            block_index=b["block_index"],
-                            id_map=fin_id_map
-                        )
+                    transformed = transform_structure(
+                        b, block_index=b["block_index"], id_map=fin_id_map
                     )
+                    transformed["page_candidates"] = b.get("page_candidates", {})  # ✅ re-attach
+                    transformed["pdf_page"] = b.get("pdf_page")                    # ✅ re-attach
+                    final_batch.append(transformed)
+                yield final_batch                           # ✅ yield ONCE per page, outside block loop
 
-                yield final_batch
-        
         # --- EXCEPTION-SAFE DEBUG PDF FINALIZATION ---
         if len(master_pdf.pages) > 0:
             try:
                 master_pdf.save(temp_debug_pdf)
                 master_pdf.close()
-                
                 if os.path.exists(temp_debug_pdf):
                     if os.path.exists(final_debug_pdf):
                         os.remove(final_debug_pdf)
@@ -495,11 +507,9 @@ def run_deep_extraction(pdf_filename, input_path=None, output_path=None, start_p
             with open(debug_coords_path, "w", encoding="utf-8") as f:
                 json.dump(debug_coords_registry, f, indent=4)
             logger.info(f"📍 Debug Coordinates saved: {debug_coords_path}")
-                
-        
+
         pdf_loader.close()
-        
-        # Yield the final path so the orchestrator can call Drive Sync
+
         yield {
             "visual_pdf": final_debug_pdf,
             "coords_json": debug_coords_path
@@ -508,19 +518,50 @@ def run_deep_extraction(pdf_filename, input_path=None, output_path=None, start_p
 if __name__ == "__main__":
     setup_logger(debug_mode=True)
     cfg = ProjectConfig()
-    TARGET = "science_10_cg_test"
+    TARGET = "toc"
     
     all_blocks = []
     caught_files = {}
-    
+
     for result in run_deep_extraction(TARGET, start_page=1):
         if isinstance(result, list):
             all_blocks.extend(result)
         elif isinstance(result, dict):
-            # This catches the final yield: {"visual_pdf": "...", "coords_json": "..."}
             caught_files = result
+    
+    # STEP 1: best strategy
+    best_strategy = finalize_auto_strategy()
+    print(f"Using strategy: {best_strategy}")
 
-    # Standard JSON Output
+    # STEP 2: apply candidates to printed_page
+    for b in all_blocks:
+        candidates = b.get("page_candidates", {})
+        val = candidates.get(best_strategy)
+        if val is not None:
+            b["printed_page"] = val
+
+    # STEP 3: tracker
+    tracker = PageNumberTracker()
+    seen_pages = set()
+
+    for b in all_blocks:
+        pdf_page = b["pdf_page"]
+        if pdf_page in seen_pages:
+            continue
+        seen_pages.add(pdf_page)
+        detected = b.get("printed_page")
+        tracker.process(pdf_page, detected)
+
+    # STEP 4: finalize offset
+    offset = tracker.finalize()
+
+    # STEP 5: apply offset correctly
+    if offset is not None:
+        for b in all_blocks:
+            if b.get("printed_page") is not None:
+                b["printed_page"] = b["printed_page"] - offset  # ✅ fixed
+
+    # STEP 6: JSON output
     _, out_base = cfg.get_active_paths()
     out_dir = os.path.join(out_base, "extraction_results")
     os.makedirs(out_dir, exist_ok=True)
@@ -531,7 +572,6 @@ if __name__ == "__main__":
         
     logger.info(f"✅ Standalone JSON complete: {out_file}")
 
-    # Update logging to show both files
     if caught_files:
         logger.info(f"🎨 Debug PDF ready: {caught_files.get('visual_pdf')}")
         logger.info(f"📍 Debug Coords ready: {caught_files.get('coords_json')}")
