@@ -1,3 +1,5 @@
+# Document_parsing\src\modules\extract.py
+
 import os
 import io
 import sys
@@ -511,7 +513,7 @@ def run_deep_extraction(pdf_filename, input_path=None, output_path=None, start_p
 if __name__ == "__main__":
     setup_logger(debug_mode=True)
     cfg = ProjectConfig()
-    TARGET = "science_10_cg_test"
+    TARGET = "NCERT10M_test"
     
     all_blocks = []
     caught_files = {}

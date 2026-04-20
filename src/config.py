@@ -1,3 +1,5 @@
+#config.py
+
 import re
 import os
 import sys
