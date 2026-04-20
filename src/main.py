@@ -8,7 +8,6 @@ from loaders.pdf_loader import PDFLoader
 from loaders.model_loader import ModelLoader
 
 from modules.scout_sync import run_scout_sync
-from modules.toc_extractor import TOCProcessorAPI
 from processing.toc_patterns import patch_toc_processor
 from modules.extract import run_deep_extraction
 from config import ProjectConfig

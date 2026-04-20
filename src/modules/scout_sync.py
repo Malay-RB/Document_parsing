@@ -177,7 +177,7 @@ def run_scout_sync(pdf_name, input_path=None, output_path=None, models=None, con
         if final_toc_pages:
             try:
                 toc_images = [pdf_loader.load_page(p_no) for p_no in final_toc_pages]
-                full_hierarchy, _ = toc.run_module(toc_images, debug=debug_mode, model=ProjectConfig.TOC_EXTRACTION_MODEL)
+                full_hierarchy, _ = toc.toc_run_module(toc_images, debug=debug_mode, model=ProjectConfig.TOC_EXTRACTION_MODEL)
             except Exception as e:
                 logger.error(f"❌ Full TOC extraction failed: {e}. Using probe data fallback.")
 

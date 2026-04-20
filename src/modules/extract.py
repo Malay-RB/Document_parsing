@@ -114,6 +114,7 @@ def run_single_page(
     PADDING = 10
 
     safe_coords = []
+
     for b in boxes:
         x0, y0, x1, y1 = b.bbox
 
@@ -124,6 +125,12 @@ def run_single_page(
         y1 = min(height, y1 + PADDING)
 
         safe_coords.append([x0, y0, x1, y1])
+
+    for i, (box, coords) in enumerate(zip(boxes, safe_coords)):
+        # 🎯 DRAW THE ACTUAL COORDINATES (safe_coords)
+        # This ensures if the padding is wrong, you see it in the debug image
+        draw.rectangle(coords, outline="red", width=3)
+        draw.text((coords[0], max(0, coords[1] - 18)), f"{i+1}:{box.label}", fill="red")
 
     # ---  OCR EXTRACTION STRATEGY ---
     USE_ASYNC = ProjectConfig.STRATEGY
@@ -150,16 +157,16 @@ def run_single_page(
         sync_duration = time.perf_counter() - sync_start
         print(f"⏱️  [SURYA SYNC] Processed {len(boxes)} blocks sequentially in {sync_duration:.3f}s")
 
-    # --- 3. PAGINATION ---
+    # --- PAGINATION ---
     raw_detected_no = find_printed_page_no(
             image,
             boxes,
             safe_coords,
             ocr_engine,
             classifier,
+            pg_no_strategy,
             ocr_type="easy",
-            height=height,
-            strategy=pg_no_strategy
+            height=height,            
         )
     print(f"RAW detected page: {raw_detected_no}")
 
@@ -171,7 +178,7 @@ def run_single_page(
 
     print(f"📌 Printed page detected: {printed_no}")
 
-    # --- 4. BLOCK PROCESSING (Assembly & Metadata) ---
+    # --- BLOCK PROCESSING (Assembly & Metadata) ---
     page_blocks = []
 
     # We now loop through the pre-extracted texts
@@ -315,11 +322,11 @@ def run_single_page(
 
     print(f"✅ Finished page {page_no} with {len(page_blocks)} blocks\n")
 
-    return page_blocks, False, debug_img
+    return page_blocks, debug_img
 
 @track_performance
 def run_deep_extraction(pdf_filename, input_path=None, output_path=None, start_page=1, pg_no_strategy=None, hierarchy=None, models=None, config=None, force_prod=False):
-    """Phase 3: Iterative Deep Content Extraction with Memory-Safe Visual Debugging."""
+    
     cfg = config if config else ProjectConfig()
     
     # --- PATH SETUP ---
@@ -328,7 +335,7 @@ def run_deep_extraction(pdf_filename, input_path=None, output_path=None, start_p
     if isinstance(final_in, tuple): final_in = final_in[0]
 
     pdf_path = os.path.join(final_in, f"{pdf_filename}.pdf")
-    strategy = pg_no_strategy if pg_no_strategy else ProjectConfig.PG_NO_STRATEGY
+    pg_no_strategy = pg_no_strategy if pg_no_strategy else ProjectConfig.PG_NO_STRATEGY
 
     # 🎯 NEW: Create a book-specific subfolder for visuals
     book_visuals_dir = os.path.join(auto_out, "extracted_visuals", pdf_filename)
@@ -378,7 +385,7 @@ def run_deep_extraction(pdf_filename, input_path=None, output_path=None, start_p
     block_counter = 1
     pending_buffer = []
 
-    debug_coords_registry = [] # New: To store box metadata
+    debug_coords_registry = [] 
     box_counter_global = 1
 
 
@@ -388,9 +395,9 @@ def run_deep_extraction(pdf_filename, input_path=None, output_path=None, start_p
             image = pdf_loader.load_page(page_no)
             
             # Unpack the 3rd return value (debug_img)
-            current_page_blocks, is_ready, debug_img = run_single_page(
+            current_page_blocks, debug_img = run_single_page(
                 image, page_no, models, layout_engine, ocr_engine, 
-                classifier, strategy, tracker, hierarchy, context_tracker=context_tracker, visuals_dir = book_visuals_dir
+                classifier, pg_no_strategy, tracker, hierarchy, context_tracker=context_tracker, visuals_dir = book_visuals_dir
             )
 
             # Append to Registry for the Coord JSON
@@ -484,7 +491,7 @@ def run_deep_extraction(pdf_filename, input_path=None, output_path=None, start_p
         
         pdf_loader.close()
         
-        # Yield the final path so the orchestrator can call Drive Sync
+        # Yield the final path so the orchestrator can use
         yield {
             "visual_pdf": final_debug_pdf,
             "coords_json": debug_coords_path

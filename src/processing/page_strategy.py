@@ -26,12 +26,12 @@ def _extract_page_val(p_text, classifier, context_label):
     # 2. Semantic Classification (Regex/Context)
     res = classifier.classify(p_text)
     if res.get("role") == "PAGE_NUMBER":
-        logger.info(f"🔢 Classified Page Number: {res['page_number']} from '{p_text}'")
+        logger.info(f"🔢 Classified Page Number: {res['page_number']} from '{p_text}'({context_label})")
         return res["page_number"]
         
     return None
 
-def _detect_from_header(image, boxes, safe_coords, ocr_engine, classifier, ocr_type, height):
+def _detect_from_header(image, boxes, safe_coords, ocr_engine, classifier, ocr_type):
     # Check first 3 boxes 
     for i, box in enumerate(boxes[:3]):
         label = getattr(box, 'label', None) 
@@ -54,7 +54,7 @@ def _detect_from_header(image, boxes, safe_coords, ocr_engine, classifier, ocr_t
             return val
     return None
 
-def _detect_from_footer(image, boxes, safe_coords, ocr_engine, classifier, ocr_type, height):
+def _detect_from_footer(image, boxes, safe_coords, ocr_engine, classifier, ocr_type):
     # DEBUG: Diagnostic info for footers
     logger.debug("🔍 Checking Footer: Targeting last 4 blocks.")
     
@@ -107,17 +107,17 @@ def _detect_from_corners(image, boxes, safe_coords, ocr_engine, classifier, ocr_
                 return val
     return None
 
-def find_printed_page_no(image, boxes, safe_coords, ocr_engine, classifier, ocr_type, height, strategy="AUTO"):
-    # INFO: Log the strategy used for each physical page to help debug sync issues
-    logger.debug(f"🛠️  Pagination Strategy: {strategy}")
+def find_printed_page_no(image, boxes, safe_coords, ocr_engine, classifier, ocr_type, height, pg_no_strategy="AUTO"):
+    # INFO: Log the pg_no_strategyused for each physical page to help debug sync issues
+    logger.debug(f"🛠️  Pagination Strategy: {pg_no_strategy}")
 
-    if strategy == "HEADER":
+    if pg_no_strategy== "HEADER":
         return _detect_from_header(image, boxes, safe_coords, ocr_engine, classifier, ocr_type, height)
-    elif strategy == "FOOTER":
+    elif pg_no_strategy== "FOOTER":
         return _detect_from_footer(image, boxes, safe_coords, ocr_engine, classifier, ocr_type, height)
-    elif strategy == "CORNERS":
+    elif pg_no_strategy== "CORNERS":
         return _detect_from_corners(image, boxes, safe_coords, ocr_engine, classifier, ocr_type, height)
-    elif strategy == "AUTO":
+    elif pg_no_strategy== "AUTO":
         page_no = _detect_from_header(image, boxes, safe_coords, ocr_engine, classifier, ocr_type, height)
         if page_no is not None: 
             return page_no

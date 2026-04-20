@@ -19,13 +19,13 @@ def run_batch_process(books_config):
 
     for i, book_info in enumerate(books_config):
         book_name = book_info["name"]
-        strategy = book_info["strategy"]
+        pg_no_strategy= book_info["strategy"]
         
         logger.info(f"\n{'='*60}\n📖 BATCH [{i+1}/{len(books_config)}]: {book_name}")
         logger.info(f"🎯 Strategy: {strategy}\n{'='*60}")
         
         try:
-            # 🎯 EXPLICIT OVERRIDE: Update the strategy for this specific book
+            # 🎯 EXPLICIT OVERRIDE: Update the pg_no_strategyfor this specific book
             cfg.PG_NO_STRATEGY = strategy
             
             # Run the existing pipeline
