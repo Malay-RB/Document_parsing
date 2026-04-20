@@ -168,13 +168,15 @@ def _extract_page_range(text: str):
 
 def _strip_trailing_junk(text: str) -> str:
     text = re.sub(r'[.\-_]{2,}', ' ', text)
-    text = re.sub(r'[^\u0900-\u097F\w\s\(\)\-\&\/]', '', text)
+    #text = re.sub(r'[^\w\s\(\)\-\&\/]', '', text)
+    text = re.sub(r'[^\u0900-\u097F\w\s\(\)\-\&\/]', '', text) #new
     return re.sub(r'\s{2,}', ' ', text).strip()
 
 
 def _safe_sanitize(text: str) -> str:
     text = re.sub(r'[\n\r\t]+', ' ', text)
-    text = re.sub(r'\s{2,}', ' ', text)
+    #text = re.sub(r'[^\w\s\-\&\(\)\/]', '', text, flags=re.UNICODE)
+    text = re.sub(r'\s{2,}', ' ', text) #new 
     return re.sub(r'\s{2,}', ' ', text).strip()
 
 
