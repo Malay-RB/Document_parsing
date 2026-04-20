@@ -74,7 +74,7 @@ def run_scout_sync(pdf_name, input_path=None, output_path=None, models=None, con
     )
     
     # Pass both engines and injected models
-    toc_api = TOCProcessor(ocr_engine=ocr_engine, models=models)
+    toc= TOCProcessor(ocr_engine=ocr_engine, models=models)
     # patch_toc_processor(toc_api)
 
     state = {
@@ -110,7 +110,7 @@ def run_scout_sync(pdf_name, input_path=None, output_path=None, models=None, con
                     state["scout_images"].append(draw_layout(image, boxes))
                     
                     # PROBE: Identify Anchor text (e.g., Chapter 1 title)
-                    probe_results, debug_frames = api.toc_run_module([image], debug=debug_mode, model=ProjectConfig.TOC_EXTRACTION_MODEL)
+                    probe_results, debug_frames = toc.toc_run_module([image], debug=debug_mode, model=ProjectConfig.TOC_EXTRACTION_MODEL)
                     if debug_frames: 
                         state["debug_images"].extend(debug_frames)
 

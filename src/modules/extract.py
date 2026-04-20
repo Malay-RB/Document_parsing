@@ -57,6 +57,8 @@ def run_single_page(
 
     print(f"📁 Visuals directory: {save_dir}")
 
+    ocr_type = ProjectConfig.EXTRACTION_MODEL
+
     # --- TOC HELPER ---
     def get_toc_metadata(current_page, h_data):
         """
@@ -150,7 +152,7 @@ def run_single_page(
     elif USE_ASYNC == "ASYNC_UNIVERSAL":
         # 🚀 NEW: Manual Concurrency (Works for Surya, EasyOCR, and Recursive Tables)
         extracted_texts = asyncio.run(extract_page_manual_concurrency(
-            image, boxes, safe_coords, models, ocr_engine, layout_engine, ocr_type="surya"
+            image, boxes, safe_coords, models, ocr_engine, layout_engine, ocr_type
         ))
 
     elif USE_ASYNC == "SYNC":
@@ -158,7 +160,7 @@ def run_single_page(
         sync_start = time.perf_counter()
         for i, (box, coord) in enumerate(zip(boxes, safe_coords)):
             # Sequential extraction
-            text = extract_page_block(image, box, coord, models, ocr_engine, ocr_type=ProjectConfig.EXTRACTION_MODEL, layout_engine=layout_engine)
+            text = extract_page_block(image, box, coord, models, ocr_engine, ocr_type, layout_engine=layout_engine)
             extracted_texts.append(text)
         
         sync_duration = time.perf_counter() - sync_start
@@ -172,15 +174,15 @@ def run_single_page(
             ocr_engine,
             classifier,
             pg_no_strategy,
-            ocr_type="easy",
-            height=height,            
+            ocr_type,
+            height,            
         )
     print(f"RAW detected page: {raw_detected_no}")
 
 
-    header_val = _detect_from_header(image, boxes, safe_coords, ocr_engine, classifier, "easy", height)
-    footer_val = _detect_from_footer(image, boxes, safe_coords, ocr_engine, classifier, "easy", height)
-    corner_val = _detect_from_corners(image, boxes, safe_coords, ocr_engine, classifier, "easy", height)
+    header_val = _detect_from_header(image, boxes, safe_coords, ocr_engine, classifier, ocr_type)
+    footer_val = _detect_from_footer(image, boxes, safe_coords, ocr_engine, classifier, ocr_type)
+    corner_val = _detect_from_corners(image, boxes, safe_coords, ocr_engine, classifier, ocr_type, height)
 
     AUTO_STATE["history"]["HEADER"].append(header_val)
     AUTO_STATE["history"]["FOOTER"].append(footer_val)
@@ -420,7 +422,7 @@ def run_deep_extraction(pdf_filename, input_path=None, output_path=None, start_p
             # Unpack the 3rd return value (debug_img)
             current_page_blocks, debug_img = run_single_page(
                 image, page_no, models, layout_engine, ocr_engine, 
-                classifier, strategy, hierarchy, context_tracker=context_tracker, visuals_dir = book_visuals_dir
+                classifier, pg_no_strategy, hierarchy, context_tracker=context_tracker, visuals_dir = book_visuals_dir
             )
 
             # Append to Registry for the Coord JSON

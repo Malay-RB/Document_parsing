@@ -167,6 +167,7 @@ def run_sync_phase(image, boxes, ocr_engine, model, target_anchor, height, width
                 detected_words = set(re.findall(r'\w+', detected_text.lower()))
                 
                 # DEBUG: Fuzzy matching word sets are for debugging only
+                print(f"Detected-> Block {i+1}: {detected_text}")
                 logger.debug(f"🔍 [Sync Matcher] Block {i+1}: Target={anchor_words} | Found={detected_words}")
                 
                 if anchor_words.issubset(detected_words) and anchor_words:

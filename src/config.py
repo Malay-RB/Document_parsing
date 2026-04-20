@@ -30,7 +30,7 @@ class ProjectConfig:
     EXTRACTION_MODEL = "easy"
     SCOUT_LIMIT = 25
     PDF_SCALE = 4.0
-    PG_NO_STRATEGY = "HEADER"
+    PG_NO_STRATEGY = "AUTO"
     DEBUG_MODE = True
 
     ENABLE_YAML_EXPORT  = False

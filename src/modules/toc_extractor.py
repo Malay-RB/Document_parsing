@@ -50,7 +50,7 @@ class TOCProcessor:
         self.page_pattern = re.compile(r"(\d+)(?:\s*(?:-|–|—|to)\s*(\d+))?$", re.IGNORECASE)
         self.min_line_length = 6
         self.max_chapter_jump = 5
-        self.transform_logic = robust_transform_logic.__get__(self, TOCProcessorAPI)
+        self.transform_logic = robust_transform_logic.__get__(self, TOCProcessor)
 
     def _spatial_grouping(self, raw_elements):
         """Groups raw OCR boxes into logical horizontal lines based on Y-coordinates."""
@@ -289,7 +289,7 @@ def run_standalone_toc(pdf_filename, page_list=None):
 
     # Run TOC processor
     toc = TOCProcessor()
-    patch_toc_processor(toc)
+    # patch_toc_processor(toc)
     results , debug_images  = toc.toc_run_module(images, debug=ProjectConfig.DEBUG_MODE, model=ProjectConfig.TOC_EXTRACTION_MODEL)
 
     # Final Export
