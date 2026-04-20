@@ -5,11 +5,21 @@ from processing.page_no_patterns import PageNumberPatterns
 
 _PNP = PageNumberPatterns()
 
+AUTO_STATE = {
+    "locked": False,
+    "strategy": None,
+    "history": {
+        "HEADER": [],
+        "FOOTER": [],
+        "CORNERS": []
+    },
+    "page_count": 0,
+}
 
 def _extract_page_val(p_text, classifier, context_label):
     """Helper to try multiple ways to find a number in text."""
     if not p_text:
-        return None
+        return None ,
         
     # #1. Direct Leading Number (NCERT Style: '122 Chapter Title')
     # #number_match = re.match(r'^(\d+)', p_text)
@@ -107,25 +117,68 @@ def _detect_from_corners(image, boxes, safe_coords, ocr_engine, classifier, ocr_
                 return val
     return None
 
-def find_printed_page_no(image, boxes, safe_coords, ocr_engine, classifier, ocr_type, height, pg_no_strategy="AUTO"):
-    # INFO: Log the pg_no_strategyused for each physical page to help debug sync issues
-    logger.debug(f"🛠️  Pagination Strategy: {pg_no_strategy}")
+def find_printed_page_no(image, boxes, safe_coords, ocr_engine, classifier, ocr_type, height, strategy="AUTO"):
+    logger.debug(f"🛠️  Pagination Strategy: {strategy}")
 
     if pg_no_strategy== "HEADER":
         return _detect_from_header(image, boxes, safe_coords, ocr_engine, classifier, ocr_type, height)
-    elif pg_no_strategy== "FOOTER":
+
+    elif strategy == "FOOTER":
         return _detect_from_footer(image, boxes, safe_coords, ocr_engine, classifier, ocr_type, height)
-    elif pg_no_strategy== "CORNERS":
-        return _detect_from_corners(image, boxes, safe_coords, ocr_engine, classifier, ocr_type, height)
-    elif pg_no_strategy== "AUTO":
-        page_no = _detect_from_header(image, boxes, safe_coords, ocr_engine, classifier, ocr_type, height)
-        if page_no is not None: 
-            return page_no
 
-        page_no = _detect_from_footer(image, boxes, safe_coords, ocr_engine, classifier, ocr_type, height)
-        if page_no is not None: 
-            return page_no
-
+    elif strategy == "CORNERS":
         return _detect_from_corners(image, boxes, safe_coords, ocr_engine, classifier, ocr_type, height)
 
-    return None
+    elif strategy == "AUTO":
+
+        AUTO_STATE["page_count"] += 1
+
+        header_val = _detect_from_header(image, boxes, safe_coords, ocr_engine, classifier, ocr_type, height)
+        footer_val = _detect_from_footer(image, boxes, safe_coords, ocr_engine, classifier, ocr_type, height)
+        corner_val = _detect_from_corners(image, boxes, safe_coords, ocr_engine, classifier, ocr_type, height)
+
+        AUTO_STATE["history"]["HEADER"].append(header_val)
+        AUTO_STATE["history"]["FOOTER"].append(footer_val)
+        AUTO_STATE["history"]["CORNERS"].append(corner_val)
+
+        candidates = []
+        if header_val is not None:
+            candidates.append(header_val)
+        if footer_val is not None:
+            candidates.append(footer_val)
+        if corner_val is not None:
+            candidates.append(corner_val)
+
+        if not candidates:
+            return None
+
+        return min(candidates)
+
+
+# 🔥 THIS MUST BE OUTSIDE (TOP LEVEL)
+def finalize_auto_strategy():
+    def seq_length(values):
+        seq = 0
+        max_seq = 0
+        prev = None
+        for v in values:
+            if v is None:
+                continue
+            if prev is None or abs(v - (prev + 1)) <= 1:
+                seq += 1
+            else:
+                seq = 1
+            prev = v
+            max_seq = max(max_seq, seq)
+        return max_seq
+
+    scores = {
+        "HEADER": seq_length(AUTO_STATE["history"]["HEADER"]),
+        "FOOTER": seq_length(AUTO_STATE["history"]["FOOTER"]),
+        "CORNERS": seq_length(AUTO_STATE["history"]["CORNERS"]),
+    }
+
+    best = max(scores, key=scores.get)
+
+    print(f"\n🔥 FINAL STRATEGY = {best}, Scores = {scores}")
+    return best

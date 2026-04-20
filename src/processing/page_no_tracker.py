@@ -1,20 +1,11 @@
 class PageNumberTracker:
     def __init__(self):
+   
+     # NEW: streak tracking
         self.current_streak = []
         self.best_streak = []
-        self.min_streak = 4
-
-        # NEW: streak tracking
-        self.current_streak = []
-        self.best_streak = []
-
         self.min_streak = 4  # tune this (3–5 recommended)
 
-    def is_locked(self):
-        return self.offset is not None and len(self.best_streak) >= self.min_streak
-
-    def resolve(self, pdf_page, detected_printed):
-        print(f"[Tracker] Input detected: {detected_printed}")  # :white_check_mark: HERE
     def process(self, pdf_page, detected_printed):
         print(f"[Tracker] Input detected: {detected_printed}")
 
@@ -40,15 +31,19 @@ class PageNumberTracker:
                 print(f"[BREAK] at pdf={pdf_page}, val={detected_printed}")
 
                 if len(self.current_streak) > len(self.best_streak):
-                    self.best_streak = self.current_streak
+                        self.best_streak = self.current_streak.copy()
 
                 self.current_streak = [(pdf_page, detected_printed)]
                 print(f"[STREAK] Restarted: {[detected_printed]}")
 
         if len(self.current_streak) > len(self.best_streak):
-            self.best_streak = self.current_streak
+            self.best_streak = self.current_streak.copy()
 
     def finalize(self):
+        # 🔥 ADD THIS LINE
+        if len(self.current_streak) > len(self.best_streak):
+            self.best_streak = self.current_streak.copy()
+
         if len(self.best_streak) < self.min_streak:
             print("❌ No strong streak found")
             return None
