@@ -1,3 +1,5 @@
+# Document_parsing\src\modules\scout_sync.py
+
 import os
 import sys
 import gc
@@ -19,7 +21,8 @@ from processing.performance_track import track_performance
 from config import ProjectConfig
 from processing.logger import setup_logger
 from processing.optimize_layout import draw_layout
-from processing.toc_patterns import patch_toc_processor
+from processing.toc_patterns import robust_transform_logic
+# from processing.toc_patterns import patch_toc_processor
 
 @track_performance
 def run_scout_sync(pdf_name, input_path=None, output_path=None, models=None, config=None, force_prod=False):
@@ -71,8 +74,8 @@ def run_scout_sync(pdf_name, input_path=None, output_path=None, models=None, con
     )
     
     # Pass both engines and injected models
-    toc = TOCProcessor(ocr_engine=ocr_engine, models=models)
-    patch_toc_processor(toc)
+    toc= TOCProcessor(ocr_engine=ocr_engine, models=models)
+    # patch_toc_processor(toc_api)
 
     state = {
         "hierarchy_data": [],

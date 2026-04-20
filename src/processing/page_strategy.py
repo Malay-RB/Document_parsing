@@ -19,7 +19,7 @@ AUTO_STATE = {
 def _extract_page_val(p_text, classifier, context_label):
     """Helper to try multiple ways to find a number in text."""
     if not p_text:
-        return None ,
+        return None
         
     # #1. Direct Leading Number (NCERT Style: '122 Chapter Title')
     # #number_match = re.match(r'^(\d+)', p_text)
@@ -117,19 +117,19 @@ def _detect_from_corners(image, boxes, safe_coords, ocr_engine, classifier, ocr_
                 return val
     return None
 
-def find_printed_page_no(image, boxes, safe_coords, ocr_engine, classifier, ocr_type, height, strategy="AUTO"):
-    logger.debug(f"🛠️  Pagination Strategy: {strategy}")
+def find_printed_page_no(image, boxes, safe_coords, ocr_engine, classifier, ocr_type, height, page_no_strategy="AUTO"):
+    logger.debug(f"🛠️  Pagination Strategy: {page_no_strategy}")
 
-    if pg_no_strategy== "HEADER":
+    if page_no_strategy== "HEADER":
         return _detect_from_header(image, boxes, safe_coords, ocr_engine, classifier, ocr_type, height)
 
-    elif strategy == "FOOTER":
+    elif page_no_strategy == "FOOTER":
         return _detect_from_footer(image, boxes, safe_coords, ocr_engine, classifier, ocr_type, height)
 
-    elif strategy == "CORNERS":
+    elif page_no_strategy == "CORNERS":
         return _detect_from_corners(image, boxes, safe_coords, ocr_engine, classifier, ocr_type, height)
 
-    elif strategy == "AUTO":
+    elif page_no_strategy == "AUTO":
 
         AUTO_STATE["page_count"] += 1
 

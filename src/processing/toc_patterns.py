@@ -77,7 +77,7 @@ _ROMAN_ID = re.compile(r"^([IVXLCDM]+)\.?\s+", re.IGNORECASE)
 # Word-style chapter: "Chapter 1" / "Chapter1" (\\s* handles missing space)
 _WORD_CH_ID = re.compile(
     # r"^(?:chapter|unit|section|part)\s*(\d+|[a-z]+)\s*(?:[\.\:\-–])?\s*",
-    r"^(?:chapter|unit|section|part|अध्याय|इकाई|भाग|खंड)\s*(\d+|[a-z]+|\d+)\s*(?:[\.\:\-–])?\s*",
+    r"^(?:chapter|unit|section|part|अध्याय|इकाई|भाग|खंड)\s*[-–]?\s*(\d+|[a-z]+|\d+)\s*(?:[\.\:\-–])?\s*",
     re.IGNORECASE,
 )
 
@@ -107,7 +107,7 @@ _THEME_HEADER = re.compile(
 # Standalone chapter label with no name after it ("Chapter 1", "Chapter1")
 _STANDALONE_CH = re.compile(
     # r"^(?:chapter|unit|section|part)\s*(\d+|[IVXLCDM]+|[a-z]+)\s*$",
-    r"^(?:chapter|unit|section|part|अध्याय|इकाई|भाग|खंड)\s*(\d+|[IVXLCDM]+|[a-z]+)\s*$",
+    r"^(?:chapter|unit|section|part|अध्याय|इकाई|भाग|खंड)\s*[-–]?\s*(\d+|[IVXLCDM]+|[a-z]+)\s*$",
     re.IGNORECASE,
 )
 
@@ -126,7 +126,7 @@ _TABLE_ROW_UNIT_ONLY = re.compile(
 _BACKMATTER_RE = re.compile(
     r"^(?:glossary|answers?|index|foreword|appendix|images?\s+and|bibliography|"
     r"acknowledgements?|about\s+the|method\s+of|note\s+to|letter\s+to|"
-    r"your\s+journey|preface|introduction|"
+    r"your\s+journey|preface|introduction|Learning Material Sheets|"
     r"शब्दावली|उत्तर|अनुक्रमणिका|प्रस्तावना|परिशिष्ट|ग्रंथसूची|"
     r"आमुख|भूमिका|टिप्पणी|पत्र|"
     r"अभ्यास|प्रश्नावली|पुनरावृत्ति|सारांश|मानचित्र|" 

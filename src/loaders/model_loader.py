@@ -1,3 +1,5 @@
+#Document_parsing\src\loaders\model_loader.py
+
 import os
 import torch
 import easyocr
@@ -10,6 +12,7 @@ from surya.settings import settings
 
 from rapidocr_onnxruntime import RapidOCR
 from rapid_latex_ocr import LaTeXOCR
+from pix2text import Pix2Text 
 
 class ModelLoader:
     _instance = None
@@ -54,10 +57,20 @@ class ModelLoader:
         self.rapid_text_engine = RapidOCR()
         self.rapid_latex_engine = LaTeXOCR()
 
+        print("📥 Loading Pix2Text engine...")
+        self.pix2text_engine = Pix2Text.from_config(
+            total_configs={
+                'text_formula': {
+                    'languages': ('en', 'hi'),   # match your EasyOCR language set
+                }
+            },
+            device=device   # inherits the same cpu/cuda decision already made above
+        )
+
         # --- EasyOCR (Crucial for GPU speed) ---
         print(f"📥 Loading EasyOCR ({device.upper()} mode)...")
         use_gpu = (device == "cuda")
-        self.easyocr_reader = easyocr.Reader(['hi','en'], gpu=use_gpu)
+        self.easyocr_reader = easyocr.Reader(['en','hi'], gpu=use_gpu)
 
         self.initialized = True
         print(f"\n✅ All models ready on {device.upper()}.")

@@ -19,7 +19,8 @@ from surya.foundation import FoundationPredictor
 from loaders.model_loader import ModelLoader
 from loaders.pdf_loader import PDFLoader
 from processing.logger import logger, setup_logger
-from processing.toc_patterns import patch_toc_processor
+# from processing.toc_patterns import patch_toc_processor
+from processing.toc_patterns import robust_transform_logic
 
 from config import ProjectConfig
 
@@ -49,6 +50,7 @@ class TOCProcessor:
         self.page_pattern = re.compile(r"(\d+)(?:\s*(?:-|–|—|to)\s*(\d+))?$", re.IGNORECASE)
         self.min_line_length = 6
         self.max_chapter_jump = 5
+        self.transform_logic = robust_transform_logic.__get__(self, TOCProcessor)
 
     def _spatial_grouping(self, raw_elements):
         """Groups raw OCR boxes into logical horizontal lines based on Y-coordinates."""
@@ -172,84 +174,85 @@ class TOCProcessor:
         structured_results = self.transform_logic(raw_output)
         return structured_results, debug_frames
 
-    def transform_logic(self, raw_pages):
-        print(f":brain: [TOC_TRANSFORM] Converting lines to structured JSON...")
-        structured_data = []
-        active_unit_id, active_unit_name = None, None
-        last_chapter_id = 0
+    
+    # def transform_logic(self, raw_pages):
+    #     print(f":brain: [TOC_TRANSFORM] Converting lines to structured JSON...")
+    #     structured_data = []
+    #     active_unit_id, active_unit_name = None, None
+    #     last_chapter_id = 0
 
-        for page in raw_pages:
-            merged_lines = []
-            lines = page.get("lines", [])
+    #     for page in raw_pages:
+    #         merged_lines = []
+    #         lines = page.get("lines", [])
 
-            # Step 1: Logic to merge page numbers that broke into new lines
-            for line in lines:
-                stripped = line.strip()
-                is_num = re.fullmatch(r'\d{1,4}(\s*(?:-|–|—|to)\s*\d{1,4})?', stripped, re.IGNORECASE)
+    #         # Step 1: Logic to merge page numbers that broke into new lines
+    #         for line in lines:
+    #             stripped = line.strip()
+    #             is_num = re.fullmatch(r'\d{1,4}(\s*(?:-|–|—|to)\s*\d{1,4})?', stripped, re.IGNORECASE)
 
-                if is_num and merged_lines:
-                    if re.match(r'^\d+\.?\s+', merged_lines[-1].strip()):
-                        merged_lines[-1] = merged_lines[-1].strip() + " " + stripped
-                        print(f"      :link: Merged floating page number: {stripped}")
-                    else: merged_lines.append(line)
-                else: merged_lines.append(line)
+    #             if is_num and merged_lines:
+    #                 if re.match(r'^\d+\.?\s+', merged_lines[-1].strip()):
+    #                     merged_lines[-1] = merged_lines[-1].strip() + " " + stripped
+    #                     print(f"      :link: Merged floating page number: {stripped}")
+    #                 else: merged_lines.append(line)
+    #             else: merged_lines.append(line)
 
-            # Step 2: Extraction logic
-            for line in merged_lines:
-                if self.is_header_or_footer(line): continue
-                cleaned = self.clean_text(line)
+    #         # Step 2: Extraction logic
+    #         for line in merged_lines:
+    #             if self.is_header_or_footer(line): continue
+    #             cleaned = self.clean_text(line)
 
-                if not cleaned or len(cleaned) < self.min_line_length or self.float_check.match(cleaned):
-                    continue
+    #             if not cleaned or len(cleaned) < self.min_line_length or self.float_check.match(cleaned):
+    #                 continue
 
-                id_match = self.chapter_id_pattern.match(cleaned)
-                if not id_match: continue
+    #             id_match = self.chapter_id_pattern.match(cleaned)
+    #             if not id_match: continue
 
-                chapter_id_candidate = int(id_match.group(1))
+    #             chapter_id_candidate = int(id_match.group(1))
 
-                # Check for unrealistic ID jumps (e.g., Ch 2 to Ch 50)
-                if chapter_id_candidate < last_chapter_id or chapter_id_candidate > last_chapter_id + self.max_chapter_jump:
-                    continue
+    #             # Check for unrealistic ID jumps (e.g., Ch 2 to Ch 50)
+    #             if chapter_id_candidate < last_chapter_id or chapter_id_candidate > last_chapter_id + self.max_chapter_jump:
+    #                 continue
 
-                page_match = self.page_pattern.search(cleaned)
-                start_p, end_p = None, None
-                if page_match:
-                    start_p = int(page_match.group(1))
-                    if page_match.group(2): end_p = int(page_match.group(2))
-                    raw_name = cleaned[id_match.end():page_match.start()].strip()
-                else:
-                    raw_name = cleaned[id_match.end():].strip()
+    #             page_match = self.page_pattern.search(cleaned)
+    #             start_p, end_p = None, None
+    #             if page_match:
+    #                 start_p = int(page_match.group(1))
+    #                 if page_match.group(2): end_p = int(page_match.group(2))
+    #                 raw_name = cleaned[id_match.end():page_match.start()].strip()
+    #             else:
+    #                 raw_name = cleaned[id_match.end():].strip()
 
-                chapter_name = self.sanitize_title(raw_name.strip(" .-_"))
-                if not chapter_name: continue
+    #             chapter_name = self.sanitize_title(raw_name.strip(" .-_"))
+    #             if not chapter_name: continue
 
-                # Logic for Unit Headers (e.g., "Unit 1 Introduction to Bio")
-                unit_check = re.search(r"^([A-Za-z\s]+?)\s+(\d+)\.?\s+(.+)", chapter_name)
-                if unit_check:
-                    active_unit_id, active_unit_name = chapter_id_candidate, self.sanitize_title(unit_check.group(1).strip())
-                    chapter_id, final_name = int(unit_check.group(2)), self.sanitize_title(unit_check.group(3).strip())
-                else:
-                    chapter_id, final_name = chapter_id_candidate, chapter_name
+    #             # Logic for Unit Headers (e.g., "Unit 1 Introduction to Bio")
+    #             unit_check = re.search(r"^([A-Za-z\s]+?)\s+(\d+)\.?\s+(.+)", chapter_name)
+    #             if unit_check:
+    #                 active_unit_id, active_unit_name = chapter_id_candidate, self.sanitize_title(unit_check.group(1).strip())
+    #                 chapter_id, final_name = int(unit_check.group(2)), self.sanitize_title(unit_check.group(3).strip())
+    #             else:
+    #                 chapter_id, final_name = chapter_id_candidate, chapter_name
 
-                print(f"      :star: Identified: Ch {chapter_id} - {final_name} [Starts Page: {start_p}]")
+    #             print(f"      :star: Identified: Ch {chapter_id} - {final_name} [Starts Page: {start_p}]")
 
-                structured_data.append({
-                    "unit_id": active_unit_id,
-                    "unit_name": active_unit_name,
-                    "chapter_id": chapter_id,
-                    "chapter_name": final_name,
-                    "start_page": start_p,
-                    "end_page": end_p
-                })
-                last_chapter_id = chapter_id
+    #             structured_data.append({
+    #                 "unit_id": active_unit_id,
+    #                 "unit_name": active_unit_name,
+    #                 "chapter_id": chapter_id,
+    #                 "chapter_name": final_name,
+    #                 "start_page": start_p,
+    #                 "end_page": end_p
+    #             })
+    #             last_chapter_id = chapter_id
 
-        # Step 3: Fill end pages based on next chapter start
-        for i in range(len(structured_data) - 1):
-            if structured_data[i]["end_page"] is None:
-                next_start = structured_data[i + 1]["start_page"]
-                if next_start: structured_data[i]["end_page"] = next_start - 1
+    #     # Step 3: Fill end pages based on next chapter start
+    #     for i in range(len(structured_data) - 1):
+    #         if structured_data[i]["end_page"] is None:
+    #             next_start = structured_data[i + 1]["start_page"]
+    #             if next_start: structured_data[i]["end_page"] = next_start - 1
 
-        return structured_data
+    #     return structured_data
 
 # ==========================================
 # STANDALONE RUNNER
@@ -287,7 +290,7 @@ def run_standalone_toc(pdf_filename, page_list=None):
 
     # Run TOC processor
     toc = TOCProcessor()
-    patch_toc_processor(toc)
+    # patch_toc_processor(toc)
     results , debug_images  = toc.toc_run_module(images, debug=ProjectConfig.DEBUG_MODE, model=ProjectConfig.TOC_EXTRACTION_MODEL)
 
     # Final Export
@@ -319,7 +322,7 @@ def run_standalone_toc(pdf_filename, page_list=None):
 
 if __name__ == "__main__":
     # SETTINGS:
-    FILENAME = "CG_Class_9_Math_toc"       # The .pdf name in your input folder
+    FILENAME = "Ncert_class_9_toc"       # The .pdf name in your input folder
     PAGES = None         # Set to None if your PDF is already cropped to TOC only
 
     run_standalone_toc(FILENAME, page_list=PAGES)
