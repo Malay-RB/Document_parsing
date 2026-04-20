@@ -174,7 +174,7 @@ def run_pipeline(pdf_name, book_metadata, config: ProjectConfig):
             fallback_imgs = [loader.load_page(p) for p in valid_range]
             
             toc_api = TOCProcessorAPI(models=shared_models)
-            patch_toc_processor(toc_api)
+            # patch_toc_processor(toc_api)
             hierarchy, _ = toc_api.run_api(fallback_imgs, debug=debug_mode, model=ProjectConfig.TOC_EXTRACTION_MODEL)
             loader.close()
             physical_start = scan_start + 5
