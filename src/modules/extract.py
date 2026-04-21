@@ -1,5 +1,3 @@
-# Document_parsing\src\modules\extract.py
-
 import os
 import io
 import sys
@@ -167,26 +165,29 @@ def run_single_page(
         print(f"⏱️  [SURYA SYNC] Processed {len(boxes)} blocks sequentially in {sync_duration:.3f}s")
 
     # --- PAGINATION ---
+    # ✅ CORRECT
     raw_detected_no = find_printed_page_no(
-            image,
-            boxes,
-            safe_coords,
-            ocr_engine,
-            classifier,
-            pg_no_strategy,
-            ocr_type,
-            height,            
-        )
+        image,
+        boxes,
+        safe_coords,
+        ocr_engine,
+        classifier,
+        ocr_type,          # ← ocr_type
+        height,            # ← height
+        pg_no_strategy,    # ← strategy
+    )
     print(f"RAW detected page: {raw_detected_no}")
 
 
-    header_val = _detect_from_header(image, boxes, safe_coords, ocr_engine, classifier, ocr_type)
-    footer_val = _detect_from_footer(image, boxes, safe_coords, ocr_engine, classifier, ocr_type)
-    corner_val = _detect_from_corners(image, boxes, safe_coords, ocr_engine, classifier, ocr_type, height)
-
-    AUTO_STATE["history"]["HEADER"].append(header_val)
-    AUTO_STATE["history"]["FOOTER"].append(footer_val)
-    AUTO_STATE["history"]["CORNERS"].append(corner_val)
+    # ✅ CORRECT — just read what find_printed_page_no already populated
+    if pg_no_strategy == "AUTO":
+        header_val = AUTO_STATE["history"]["HEADER"][-1]
+        footer_val = AUTO_STATE["history"]["FOOTER"][-1]
+        corner_val = AUTO_STATE["history"]["CORNERS"][-1]
+    else:
+        header_val = raw_detected_no if pg_no_strategy == "HEADER" else None
+        footer_val = raw_detected_no if pg_no_strategy == "FOOTER" else None
+        corner_val = raw_detected_no if pg_no_strategy == "CORNERS" else None
     
 
     # temporary value (will be corrected later)
@@ -471,6 +472,9 @@ def run_deep_extraction(pdf_filename, input_path=None, output_path=None, start_p
         raise e 
 
     finally:
+        # --- COLLECT ALL BLOCKS FOR POST-PROCESSING ---
+        all_blocks_for_correction = []
+        
         if pending_buffer:
             logger.info("🔒 Finalizing offset using best streak...")
             for old_pdf_no, old_blocks in pending_buffer:
@@ -483,7 +487,46 @@ def run_deep_extraction(pdf_filename, input_path=None, output_path=None, start_p
                     transformed["page_candidates"] = b.get("page_candidates", {})  # ✅ re-attach
                     transformed["pdf_page"] = b.get("pdf_page")                    # ✅ re-attach
                     final_batch.append(transformed)
+                    all_blocks_for_correction.append(transformed)  # ✅ collect for correction
                 yield final_batch                           # ✅ yield ONCE per page, outside block loop
+
+        # --- PAGE NUMBER CORRECTION (MOVED FROM __main__) ---
+        if all_blocks_for_correction:
+            logger.info("🔢 Starting page number correction...")
+            
+            # STEP 1: Determine best strategy
+            best_strategy = finalize_auto_strategy()
+            logger.info(f"✅ Using pagination strategy: {best_strategy}")
+
+            # STEP 2: Apply candidates to printed_page
+            for b in all_blocks_for_correction:
+                candidates = b.get("page_candidates", {})
+                val = candidates.get(best_strategy)
+                if val is not None:
+                    b["printed_page"] = val
+
+            # STEP 3: Initialize tracker
+            tracker = PageNumberTracker()
+            seen_pages = set()
+
+            for b in all_blocks_for_correction:
+                pdf_page = b["pdf_page"]
+                if pdf_page in seen_pages:
+                    continue
+                seen_pages.add(pdf_page)
+                detected = b.get("printed_page")
+                tracker.process(pdf_page, detected)
+
+            # STEP 4: Finalize offset
+            offset = tracker.finalize()
+            logger.info(f"📊 Calculated page offset: {offset}")
+
+            # STEP 5: Apply offset correctly
+            if offset is not None:
+                for b in all_blocks_for_correction:
+                    if b.get("printed_page") is not None:
+                        b["printed_page"] = b["printed_page"] - offset
+                logger.info(f"✅ Applied offset of {offset} to all printed_page values")
 
         # --- EXCEPTION-SAFE DEBUG PDF FINALIZATION ---
         if len(master_pdf.pages) > 0:
@@ -520,45 +563,14 @@ if __name__ == "__main__":
     all_blocks = []
     caught_files = {}
 
+    # ✅ Just collect results - page number correction now happens inside run_deep_extraction()
     for result in run_deep_extraction(TARGET, start_page=1):
         if isinstance(result, list):
             all_blocks.extend(result)
         elif isinstance(result, dict):
             caught_files = result
-    
-    # STEP 1: best strategy
-    best_strategy = finalize_auto_strategy()
-    print(f"Using strategy: {best_strategy}")
 
-    # STEP 2: apply candidates to printed_page
-    for b in all_blocks:
-        candidates = b.get("page_candidates", {})
-        val = candidates.get(best_strategy)
-        if val is not None:
-            b["printed_page"] = val
-
-    # STEP 3: tracker
-    tracker = PageNumberTracker()
-    seen_pages = set()
-
-    for b in all_blocks:
-        pdf_page = b["pdf_page"]
-        if pdf_page in seen_pages:
-            continue
-        seen_pages.add(pdf_page)
-        detected = b.get("printed_page")
-        tracker.process(pdf_page, detected)
-
-    # STEP 4: finalize offset
-    offset = tracker.finalize()
-
-    # STEP 5: apply offset correctly
-    if offset is not None:
-        for b in all_blocks:
-            if b.get("printed_page") is not None:
-                b["printed_page"] = b["printed_page"] - offset  # ✅ fixed
-
-    # STEP 6: JSON output
+    # ✅ Page numbers are already corrected - just save the JSON
     _, out_base = cfg.get_active_paths()
     out_dir = os.path.join(out_base, "extraction_results")
     os.makedirs(out_dir, exist_ok=True)

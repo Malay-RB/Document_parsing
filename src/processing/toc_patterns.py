@@ -107,7 +107,7 @@ _THEME_HEADER = re.compile(
 # Standalone chapter label with no name after it ("Chapter 1", "Chapter1")
 _STANDALONE_CH = re.compile(
     # r"^(?:chapter|unit|section|part)\s*(\d+|[IVXLCDM]+|[a-z]+)\s*$",
-    r"^(?:chapter|unit|section|part|अध्याय|इकाई|भाग|खंड)\s*[-–]?\s*(\d+|[IVXLCDM]+|[a-z]+)\s*$",
+    r"^(?:chapter|unit|section|part|अध्याय|इकाई|भाग|खंड|विभाग)\s*[-–]?\s*(\d+|[IVXLCDM]+|[a-z]+)\s*$",
     re.IGNORECASE,
 )
 
@@ -168,13 +168,15 @@ def _extract_page_range(text: str):
 
 def _strip_trailing_junk(text: str) -> str:
     text = re.sub(r'[.\-_]{2,}', ' ', text)
-    text = re.sub(r'[^\u0900-\u097F\w\s\(\)\-\&\/]', '', text)
+    #text = re.sub(r'[^\w\s\(\)\-\&\/]', '', text)
+    text = re.sub(r'[^\u0900-\u097F\w\s\(\)\-\&\/]', '', text) #new
     return re.sub(r'\s{2,}', ' ', text).strip()
 
 
 def _safe_sanitize(text: str) -> str:
     text = re.sub(r'[\n\r\t]+', ' ', text)
-    text = re.sub(r'\s{2,}', ' ', text)
+    #text = re.sub(r'[^\w\s\-\&\(\)\/]', '', text, flags=re.UNICODE)
+    text = re.sub(r'\s{2,}', ' ', text) #new 
     return re.sub(r'\s{2,}', ' ', text).strip()
 
 
