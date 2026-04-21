@@ -50,7 +50,7 @@ def _detect_from_header(image, boxes, safe_coords, ocr_engine, classifier, ocr_t
         elif label is None and isinstance(box, (list, tuple)):
             label = box[-1] 
 
-        if LABEL_MAP.get(label) == "VISUAL":
+        if LABEL_MAP.get(label) in ["VISUAL", "TABLE"]:
             continue
             
         x1, y1, x2, y2 = map(int, safe_coords[i])
@@ -75,7 +75,7 @@ def _detect_from_footer(image, boxes, safe_coords, ocr_engine, classifier, ocr_t
         box = boxes[idx]
         label = getattr(box, 'label', None) or (box.get('label') if isinstance(box, dict) else None)
         
-        if LABEL_MAP.get(label) == "VISUAL":
+        if LABEL_MAP.get(label) in ["VISUAL", "TABLE"]:
             logger.debug(f"  ∟ Footer Box {idx} is VISUAL. Skipping.")
             continue
             
