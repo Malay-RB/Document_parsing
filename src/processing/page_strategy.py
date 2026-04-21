@@ -120,22 +120,24 @@ def _detect_from_corners(image, boxes, safe_coords, ocr_engine, classifier, ocr_
 def find_printed_page_no(image, boxes, safe_coords, ocr_engine, classifier, ocr_type, height, page_no_strategy="AUTO"):
     logger.debug(f"🛠️  Pagination Strategy: {page_no_strategy}")
 
-    if page_no_strategy== "HEADER":
-        return _detect_from_header(image, boxes, safe_coords, ocr_engine, classifier, ocr_type, height)
+    if page_no_strategy == "HEADER":
+        return _detect_from_header(image, boxes, safe_coords, ocr_engine, classifier, ocr_type)
+        # ✅ removed height
 
     elif page_no_strategy == "FOOTER":
-        return _detect_from_footer(image, boxes, safe_coords, ocr_engine, classifier, ocr_type, height)
+        return _detect_from_footer(image, boxes, safe_coords, ocr_engine, classifier, ocr_type)
+        # ✅ removed height
 
     elif page_no_strategy == "CORNERS":
         return _detect_from_corners(image, boxes, safe_coords, ocr_engine, classifier, ocr_type, height)
+        # ✅ height stays — corners needs it for zone calculation
 
     elif page_no_strategy == "AUTO":
-
         AUTO_STATE["page_count"] += 1
 
-        header_val = _detect_from_header(image, boxes, safe_coords, ocr_engine, classifier, ocr_type, height)
-        footer_val = _detect_from_footer(image, boxes, safe_coords, ocr_engine, classifier, ocr_type, height)
-        corner_val = _detect_from_corners(image, boxes, safe_coords, ocr_engine, classifier, ocr_type, height)
+        header_val = _detect_from_header(image, boxes, safe_coords, ocr_engine, classifier, ocr_type)         # ✅ no height
+        footer_val = _detect_from_footer(image, boxes, safe_coords, ocr_engine, classifier, ocr_type)         # ✅ no height
+        corner_val = _detect_from_corners(image, boxes, safe_coords, ocr_engine, classifier, ocr_type, height) # ✅ height stays
 
         AUTO_STATE["history"]["HEADER"].append(header_val)
         AUTO_STATE["history"]["FOOTER"].append(footer_val)
