@@ -107,7 +107,7 @@ _THEME_HEADER = re.compile(
 # Standalone chapter label with no name after it ("Chapter 1", "Chapter1")
 _STANDALONE_CH = re.compile(
     # r"^(?:chapter|unit|section|part)\s*(\d+|[IVXLCDM]+|[a-z]+)\s*$",
-    r"^(?:chapter|unit|section|part|अध्याय|इकाई|भाग|खंड)\s*[-–]?\s*(\d+|[IVXLCDM]+|[a-z]+)\s*$",
+    r"^(?:chapter|unit|section|part|अध्याय|इकाई|भाग|खंड|विभाग)\s*[-–]?\s*(\d+|[IVXLCDM]+|[a-z]+)\s*$",
     re.IGNORECASE,
 )
 

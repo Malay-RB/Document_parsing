@@ -168,36 +168,36 @@ def run_single_page(
 
     # --- PAGINATION ---
     raw_detected_no = find_printed_page_no(
-            image,
-            boxes,
-            safe_coords,
-            ocr_engine,
-            classifier,
-            pg_no_strategy,
-            ocr_type,
-            height,            
-        )
+        image,
+        boxes,
+        safe_coords,
+        ocr_engine,
+        classifier,
+        pg_no_strategy,
+        ocr_type,
+        height,
+    )
     print(f"RAW detected page: {raw_detected_no}")
 
+    # Read last appended values — only valid if AUTO mode populated them
+    if pg_no_strategy == "AUTO":
+        header_val = AUTO_STATE["history"]["HEADER"][-1]
+        footer_val = AUTO_STATE["history"]["FOOTER"][-1]
+        corner_val = AUTO_STATE["history"]["CORNERS"][-1]
+    else:
+        # Non-AUTO strategies only use one source; others are unknown
+        header_val = raw_detected_no if pg_no_strategy == "HEADER" else None
+        footer_val = raw_detected_no if pg_no_strategy == "FOOTER" else None
+        corner_val = raw_detected_no if pg_no_strategy == "CORNERS" else None
 
-    header_val = _detect_from_header(image, boxes, safe_coords, ocr_engine, classifier, ocr_type)
-    footer_val = _detect_from_footer(image, boxes, safe_coords, ocr_engine, classifier, ocr_type)
-    corner_val = _detect_from_corners(image, boxes, safe_coords, ocr_engine, classifier, ocr_type, height)
-
-    AUTO_STATE["history"]["HEADER"].append(header_val)
-    AUTO_STATE["history"]["FOOTER"].append(footer_val)
-    AUTO_STATE["history"]["CORNERS"].append(corner_val)
-    
-
-    # temporary value (will be corrected later)
     printed_no = raw_detected_no
 
     print(
-    f"📌 Page Candidates → "
-    f"HEADER: {header_val} | "
-    f"FOOTER: {footer_val} | "
-    f"CORNERS: {corner_val}"
-)
+        f"📌 Page Candidates → "
+        f"HEADER: {header_val} | "
+        f"FOOTER: {footer_val} | "
+        f"CORNERS: {corner_val}"
+    )
 
     # --- BLOCK PROCESSING (Assembly & Metadata) ---
     page_blocks = []
