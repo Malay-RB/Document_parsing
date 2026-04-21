@@ -64,7 +64,7 @@ class ModelLoader:
                     'languages': ('en', 'hi'),   # match your EasyOCR language set
                 }
             },
-            device=device   # inherits the same cpu/cuda decision already made above
+            device="cpu"   # inherits the same cpu/cuda decision already made above
         )
 
         # --- EasyOCR (Crucial for GPU speed) ---
