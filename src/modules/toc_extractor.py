@@ -98,81 +98,262 @@ class TOCProcessor:
 
     def sanitize_title(self, text):
         text = re.sub(r'[\n\r\t]+', ' ', text)
-        #text = re.sub(r'[^\w\s\-\&\(\)]', '', text, flags=re.UNICODE)
         text = re.sub(r'\s{2,}', ' ', text)
         return text.strip()
 
+    def detect_toc_pages(self, raw_pages, top_k=5):
+        page_scores = []
+
+        for page_idx, page in enumerate(raw_pages):
+            lines = page.get("lines", [])
+
+            # Clean safely
+            cleaned_lines = []
+            for l in lines:
+                cl = self.clean_text(l)
+                if cl:
+                    cleaned_lines.append(cl)
+
+            if not cleaned_lines:
+                continue
+
+            toc_like = 0
+
+            for line in cleaned_lines:
+                line = line.strip()
+
+                # Page number at end (e.g., "Chapter 1 .... 23")
+                if re.search(r"\d{1,4}(\s*[-–—]\s*\d{1,4})?\s*$", line):
+                    toc_like += 1
+
+                # "Chapter 1"
+                elif re.match(r"^Chapter\s+\d+", line, re.IGNORECASE):
+                    toc_like += 1
+
+                # "1. Title"
+                elif re.match(r"^\d+\.?\s+", line):
+                    toc_like += 1
+
+            total = len(cleaned_lines)
+            score = (toc_like / total) * 100 if total > 0 else 0
+
+            print(f"📄 Page {page_idx+1} → TOC Score: {score:.2f}% ({toc_like}/{total})")
+
+            page_scores.append({
+                "page_number": page_idx + 1,
+                "toc_score": round(score, 2)
+            })
+
+        if not page_scores:
+            print("⚠️ No pages scored for TOC detection.")
+            return []
+
+        # Sort by score
+        page_scores.sort(key=lambda x: x["toc_score"], reverse=True)
+
+        print("\n🏆 TOP TOC PAGES:")
+        for p in page_scores[:top_k]:
+            print(f"➡ Page {p['page_number']} → {p['toc_score']}%")
+
+        return page_scores[:top_k]
+
+    def _score_single_page(self, lines):
+      """Score a single page's lines for TOC likelihood. Returns score 0-100."""
+      cleaned_lines = []
+      for l in lines:
+          cl = self.clean_text(l)
+          if cl:
+              cleaned_lines.append(cl)
+
+      if not cleaned_lines:
+          return 0.0
+
+      toc_like = 0
+      for line in cleaned_lines:
+          line = line.strip()
+          if re.search(r"\d{1,4}(\s*[-–—]\s*\d{1,4})?\s*$", line):
+              toc_like += 1
+          elif re.match(r"^Chapter\s+\d+", line, re.IGNORECASE):
+              toc_like += 1
+          elif re.match(r"^\d+\.?\s+", line):
+              toc_like += 1
+
+      total = len(cleaned_lines)
+      return round((toc_like / total) * 100, 2) if total > 0 else 0.0
+
+
     def toc_run_module(self, toc_images, debug=True, model=ProjectConfig.TOC_EXTRACTION_MODEL):
-        print(f"\n:book: [TOC_PROCESS] Extracting structure using {model.upper()}...")
+        print(f"\n📖 [TOC_PROCESS] Extracting structure using {model.upper()}...")
+
         raw_output = []
         debug_frames = []
+        page_scores = {}
 
+        # ================================
+        # CONFIG
+        # ================================
+        selected_pages = []
+        start_found = False
+        base_score = None
+
+        DROP_THRESHOLD = 10
+        START_THRESHOLD = 80
+
+        # ================================
+        # STEP 1: OCR + SCORE
+        # ================================
         for idx, img in enumerate(toc_images):
-            print(f"   :page_facing_up: Processing Page {idx+1}/{len(toc_images)}...")
 
-            # Image Enhancement for OCR
-            img_padded = ImageOps.expand(img, border=(50, 0, 300, 0), fill='white')
-            img_padded = ImageOps.autocontrast(img_padded)
-            img_padded = img_padded.filter(ImageFilter.UnsharpMask(radius=2, percent=150, threshold=3))
+            page_number = idx + 1  # ✅ FIXED
+
+            print(f"   📄 Processing Page {page_number}/{len(toc_images)}...")
+
+            # ----------------------------
+            # LOAD IMAGE
+            # ----------------------------
+            try:
+                if isinstance(img, Image.Image):
+                    image = img.convert("RGB")
+                else:
+                    image = Image.open(img).convert("RGB")
+            except Exception as e:
+                print(f"❌ Failed to load image {page_number}: {e}")
+                continue
 
             elements_to_group = []
 
-            if model == "surya":
-                print("      🔎 Running Surya OCR...")
-                line_predictions = self.recognition_predictor([img_padded], det_predictor=self.detection_predictor)[0]
-                elements_to_group = line_predictions.text_lines
-                print(f"      :white_check_mark: Surya found {len(elements_to_group)} elements.")
-                print(f"      🔍 RAW ELEMENTS: {[e.text for e in elements_to_group]}")  # ← ADD HERE
-                print(f"      🔍 RAW ELEMENTS WITH COORDS: {[(e.text, e.bbox) for e in elements_to_group]}")
+            # ----------------------------
+            # OCR
+            # ----------------------------
+            try:
+                if model == "surya":
+                    line_predictions = self.recognition_predictor(
+                        [image],
+                        det_predictor=self.detection_predictor
+                    )[0]
+                    elements_to_group = line_predictions.text_lines
 
-            elif model == "easy":
-                results = self.easyocr_reader.readtext(np.array(img_padded))
-                for res in results:
-                    coords, text = res[0], res[1]
+                elif model == "easy":
+                    results = self.easyocr_reader.readtext(np.array(image))
 
-                    # --- FIX: COORDINATE NORMALIZATION ---
-                    # EasyOCR returns [[x0,y0], [x1,y1], [x2,y2], [x3,y3]]
-                    x_coords = [p[0] for p in coords]
-                    y_coords = [p[1] for p in coords]
-                    xmin, xmax = min(x_coords), max(x_coords)
-                    ymin, ymax = min(y_coords), max(y_coords)
+                    for res in results:
+                        coords, text = res[0], res[1]
 
-                    class MockLine: pass
-                    m = MockLine()
-                    # Assign normalized coordinates
-                    m.bbox = [xmin, ymin, xmax, ymax]
-                    m.text = text
-                    elements_to_group.append(m)
-                print(f"      :white_check_mark: EasyOCR found {len(elements_to_group)} elements.")
-                print(f"      🔍 RAW ELEMENTS: {[e.text for e in elements_to_group]}")
-            if debug:
-                # Create a copy to draw on so we don't mess up the original for OCR
-                draw_img = img.copy()
-                draw = ImageDraw.Draw(draw_img)
-                # The padding we added earlier
-                LEFT_PAD = 50
-                TOP_PAD = 0
+                        x_coords = [p[0] for p in coords]
+                        y_coords = [p[1] for p in coords]
 
-                for el in elements_to_group:
-                    # Subtract the padding from the coordinates to align with the original image
-                    orig_bbox = [
-                        el.bbox[0] - LEFT_PAD, # xmin
-                        el.bbox[1] - TOP_PAD,  # ymin
-                        el.bbox[2] - LEFT_PAD, # xmax
-                        el.bbox[3] - TOP_PAD   # ymax
-                    ]
-                    draw.rectangle(orig_bbox, outline="red", width=3)
+                        class MockLine:
+                            pass
 
-                debug_frames.append(draw_img)
+                        m = MockLine()
+                        m.bbox = [
+                            min(x_coords), min(y_coords),
+                            max(x_coords), max(y_coords)
+                        ]
+                        m.text = text
 
-            grouped_lines = self._spatial_grouping(elements_to_group)
-            print(f"      🔍 BBOX TYPE: {type(elements_to_group[0].bbox)}, VALUE: {elements_to_group[0].bbox}")
-            # raw_output.append({"lines": grouped_lines})
-            raw_output.append({"lines": grouped_lines, "elements": elements_to_group})
+                        elements_to_group.append(m)
 
+            except Exception as e:
+                print(f"❌ OCR failed on page {page_number}: {e}")
+                continue
 
-        structured_results = self.transform_logic(raw_output)
-        return structured_results, debug_frames
+            # ----------------------------
+            # GROUPING
+            # ----------------------------
+            try:
+                grouped_lines = self._spatial_grouping(elements_to_group)
+            except Exception as e:
+                print(f"❌ Grouping failed on page {page_number}: {e}")
+                grouped_lines = []
+
+            # STORE RAW
+            page_data = {
+                "lines": grouped_lines,
+                "elements": elements_to_group
+            }
+            raw_output.append(page_data)
+
+            # ----------------------------
+            # SCORING
+            # ----------------------------
+            score = self._score_single_page(grouped_lines)
+            page_scores[page_number] = score
+
+            print(f"📄 Page {page_number} → TOC Score: {score:.2f}%\n")
+
+            # ----------------------------
+            # TOC DETECTION LOGIC
+            # ----------------------------
+            if not start_found:
+                if score >= START_THRESHOLD:
+                    start_found = True
+                    base_score = score
+
+                    selected_pages.append(page_number)
+
+                    print(f"✅ TOC START at Page {page_number} → Score: {score}% (base set)")
+                else:
+                    print(f"⏭️  Page {page_number} → Score: {score}% (below {START_THRESHOLD}%, skipping)")
+
+            else:
+                drop = base_score - score
+
+                if drop > DROP_THRESHOLD:
+                    print(
+                        f"🛑 SUDDEN DROP at Page {page_number} → Score: {score}% "
+                        f"(dropped {drop:.1f}pts from base {base_score}%) — STOPPING"
+                    )
+                    break
+                else:
+                    selected_pages.append(page_number)
+                    print(f"✅ Page {page_number} → Score: {score}% (within range, included)")
+
+        # ================================
+        # STEP 2: VALIDATION
+        # ================================
+        if not raw_output:
+            print("❌ No OCR output generated.")
+            return [], [], []
+
+        if not selected_pages:
+            print("⚠️ No TOC pages passed the threshold.")
+            return [], [], []
+
+        print(f"\n🔥 Selected TOC pages: {selected_pages}")
+
+        # ================================
+        # STEP 3: FILTER OUTPUT
+        # ================================
+        filtered_raw_output = []
+
+        for p in selected_pages:
+            idx = p - 1
+            if 0 <= idx < len(raw_output):
+                filtered_raw_output.append(raw_output[idx])
+
+        if not filtered_raw_output:
+            print("❌ No valid TOC pages after filtering.")
+            return [], [], selected_pages
+
+        # ================================
+        # STEP 4: TRANSFORM
+        # ================================
+        try:
+            structured_results = self.transform_logic(filtered_raw_output)
+        except Exception as e:
+            print(f"❌ transform_logic failed: {e}")
+            return [], [], selected_pages
+
+        if not structured_results:
+            print("⚠️ transform_logic returned empty result.")
+            return [], [], selected_pages
+
+        # ================================
+        # FINAL OUTPUT
+        # ================================
+        return structured_results, debug_frames, selected_pages
+
 
     
     # def transform_logic(self, raw_pages):
