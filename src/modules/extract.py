@@ -472,40 +472,34 @@ def run_deep_extraction(pdf_filename, input_path=None, output_path=None, start_p
         raise e 
 
     finally:
-        # --- COLLECT ALL BLOCKS FOR POST-PROCESSING ---
+        logger.info(f"🔍 DEBUG: pending_buffer has {len(pending_buffer)} pages")
+        logger.info(f"🔍 DEBUG: all_blocks_for_correction will be built from this")
+
         all_blocks_for_correction = []
-        
+
         if pending_buffer:
-            logger.info("🔒 Finalizing offset using best streak...")
             for old_pdf_no, old_blocks in pending_buffer:
                 fin_id_map = { b["block_index"]: b["id"] for b in old_blocks }
-                final_batch = []
                 for b in old_blocks:
-                    transformed = transform_structure(
-                        b, block_index=b["block_index"], id_map=fin_id_map
-                    )
-                    transformed["page_candidates"] = b.get("page_candidates", {})  # ✅ re-attach
-                    transformed["pdf_page"] = b.get("pdf_page")                    # ✅ re-attach
-                    final_batch.append(transformed)
-                    all_blocks_for_correction.append(transformed)  # ✅ collect for correction
-                yield final_batch                           # ✅ yield ONCE per page, outside block loop
+                    # ✅ Grab these BEFORE transform_structure potentially changes keys
+                    original_pdf_page = b["pdf_page"]
+                    original_candidates = b.get("page_candidates", {})
+                    original_block_index = b["block_index"]
 
-        # --- PAGE NUMBER CORRECTION (MOVED FROM __main__) ---
+                    transformed = transform_structure(
+                        b, block_index=original_block_index, id_map=fin_id_map
+                    )
+
+                    # ✅ Force re-attach after transform (regardless of what transform did)
+                    transformed["pdf_page"] = original_pdf_page
+                    transformed["page_candidates"] = original_candidates
+                    all_blocks_for_correction.append(transformed)
+
+        # PAGE NUMBER CORRECTION
         if all_blocks_for_correction:
-            logger.info("🔢 Starting page number correction...")
-            
-            # STEP 1: Determine best strategy
             best_strategy = finalize_auto_strategy()
             logger.info(f"✅ Using pagination strategy: {best_strategy}")
 
-            # STEP 2: Apply candidates to printed_page
-            for b in all_blocks_for_correction:
-                candidates = b.get("page_candidates", {})
-                val = candidates.get(best_strategy)
-                if val is not None:
-                    b["printed_page"] = val
-
-            # STEP 3: Initialize tracker
             tracker = PageNumberTracker()
             seen_pages = set()
 
@@ -514,21 +508,32 @@ def run_deep_extraction(pdf_filename, input_path=None, output_path=None, start_p
                 if pdf_page in seen_pages:
                     continue
                 seen_pages.add(pdf_page)
-                detected = b.get("printed_page")
+                candidates = b.get("page_candidates", {})
+                detected = candidates.get(best_strategy)
                 tracker.process(pdf_page, detected)
 
-            # STEP 4: Finalize offset
             offset = tracker.finalize()
             logger.info(f"📊 Calculated page offset: {offset}")
 
-            # STEP 5: Apply offset correctly
             if offset is not None:
                 for b in all_blocks_for_correction:
-                    if b.get("printed_page") is not None:
-                        b["printed_page"] = b["printed_page"] - offset
-                logger.info(f"✅ Applied offset of {offset} to all printed_page values")
+                    corrected = b["pdf_page"] + offset
+                    b["printed_page"] = corrected  # internal, used during correction
+                    b["page_number"] = corrected   # final JSON key
+                logger.info(f"✅ Applied offset {offset} to all blocks")
+            else:
+                logger.warning("⚠️ No offset found — printed_page left as-is")
 
-        # --- EXCEPTION-SAFE DEBUG PDF FINALIZATION ---
+        # YIELD CORRECTED BLOCKS
+        if all_blocks_for_correction:
+            page_batch_map = {}
+            for b in all_blocks_for_correction:
+                page_batch_map.setdefault(b["pdf_page"], []).append(b)
+
+            for old_pdf_no, _ in pending_buffer:
+                yield page_batch_map.get(old_pdf_no, [])
+
+        # DEBUG PDF
         if len(master_pdf.pages) > 0:
             try:
                 master_pdf.save(temp_debug_pdf)
@@ -541,15 +546,13 @@ def run_deep_extraction(pdf_filename, input_path=None, output_path=None, start_p
             except Exception as pdf_err:
                 logger.error(f"❌ Failed to finalize Debug PDF: {pdf_err}")
 
-        # --- SAVE THE COORDINATES JSON ---
         if debug_coords_registry:
             with open(debug_coords_path, "w", encoding="utf-8") as f:
                 json.dump(debug_coords_registry, f, indent=4)
             logger.info(f"📍 Debug Coordinates saved: {debug_coords_path}")
 
         pdf_loader.close()
-        
-        # Yield the final path so the orchestrator can call Drive Sync
+
         yield {
             "visual_pdf": final_debug_pdf,
             "coords_json": debug_coords_path
