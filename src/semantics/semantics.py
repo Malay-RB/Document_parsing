@@ -158,23 +158,23 @@ def transform_structure(process_output, block_index=0, id_map = None):
                 global_ids.append(id_map[local_idx])
 
     transformed = {
-        "id": f"u{unit_id}_c{chap_id}_p{pdf_p}_b{block_index}",
-        "sequence_id": block_index,
-        "unit_id": toc.get("unit_id"),
-        "unit_name": toc.get("unit_name"),
-        "chapter_id": toc.get("chapter_id"),
-        "chapter_name": toc.get("chapter_name"),
-        "subtopic_id": toc.get("subtopic_id"),
-        "subtopic_name": toc.get("chapter_name") if toc.get("is_subtopic") else None,
-        "section_id": process_output.get("section_id"),
-        "parent_section_block_id": process_output.get("parent_section_block_id"),
-        "page_number": process_output.get("printed_page"),
-        "pdf_page": process_output.get("pdf_page"),
-        "block_index": block_index,
-        "content_type": content_type, # This will now be 'equation', 'chapter', 'body', etc.
-        "text": process_output.get("text", ""),
-        "nearby_content_ids": global_ids,
-        "asset": process_output.get("asset")
-    }
+    "id": f"u{unit_id}_c{chap_id}_p{pdf_p}_b{block_index}",
+    "sequence_id": block_index,
+    "unit_id": toc.get("unit_id"),
+    "unit_name": toc.get("unit_name"),
+    "chapter_id": toc.get("chapter_id"),
+    "chapter_name": toc.get("chapter_name"),
+    "subtopic_id": toc.get("subtopic_id"),
+    "subtopic_name": toc.get("chapter_name") if toc.get("is_subtopic") else None,
+    "section_id": process_output.get("section_id"),
+    "parent_section_block_id": process_output.get("parent_section_block_id"),
+    "page_number": process_output.get("printed_page"),
+    "pdf_page": process_output.get("pdf_page"),
+    "block_index": block_index,
+    "content_type": content_type,
+    "text": process_output.get("text", ""),
+    "nearby_content_ids": global_ids,
+    "asset": process_output.get("asset")
+}
     
     return transformed
