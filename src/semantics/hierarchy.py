@@ -75,6 +75,7 @@ def convert_to_hierarchy(input_path: str, output_path: str = None):
         board_name = chunk[0].get("board_name")
         subject_name = chunk[0].get("subject_name")
         standard = chunk[0].get("standard")
+        medium = chunk[0].get("medium")
 
         pdf_pages = sorted(set(b.get("pdf_page", 0) for b in chunk))
         first_page = pdf_pages[0] if pdf_pages else 0
@@ -135,6 +136,7 @@ def convert_to_hierarchy(input_path: str, output_path: str = None):
             "board_name": board_name,
             "subject_name": subject_name,
             "standard": standard,
+            "medium": medium,
             "pages": pdf_pages,
             "sections": sections_ordered,
         })

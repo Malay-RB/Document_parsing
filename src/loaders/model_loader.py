@@ -61,7 +61,7 @@ class ModelLoader:
         self.pix2text_engine = Pix2Text.from_config(
             total_configs={
                 'text_formula': {
-                    'languages': ('en', 'hi'),   # match your EasyOCR language set
+                    'languages': ('en','hi'),   # match your EasyOCR language set
                 }
             },
             device="cpu"   # inherits the same cpu/cuda decision already made above

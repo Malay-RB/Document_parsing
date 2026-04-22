@@ -8,10 +8,11 @@ from loaders.pdf_loader import PDFLoader
 from loaders.model_loader import ModelLoader
 
 from modules.scout_sync import run_scout_sync
-from processing.toc_patterns import patch_toc_processor
 from modules.extract import run_deep_extraction
 from config import ProjectConfig
 from modules.yaml_exporter import convert_json_to_yaml
+
+from exporters.drive_upload import DriveModule
 
 from semantics.hierarchy import convert_to_hierarchy
 from semantics.asset_fit import NearbyContentLinker
@@ -127,22 +128,33 @@ def run_pipeline(pdf_name, book_metadata, config: ProjectConfig):
         except Exception as e:
             logger.error(f":x: Final ID step failed: {e}")
 
-    # def sync_all_to_cloud():
-    #     if not config.ENABLE_DRIVE_SYNC:
-    #         return
+    def sync_all_to_cloud():
+        if not config.ENABLE_DRIVE_SYNC:
+            return
 
-    #     logger.info("☁️ Initiating Google Drive Sync...")
-    #     upload_to_drive(final_output_path, pdf_name, config, mode="object")
+        logger.info("☁️ Initiating Google Drive Sync...")
+        try:
+            # Initialize the DriveModule
+            drive = DriveModule(config)
+            
+            # Prepare the list of files to upload
+            # We upload the final structured JSON and the original source PDF
+            files_to_sync = [
+                final_output_path,  # The generated JSON
+                full_pdf_path       # The original PDF
+            ]
 
-    #     pdf_path    = caught_debug_files.get("visual_pdf")
-    #     coords_path = caught_debug_files.get("coords_json")
-    #     shared_debug_run_id = None
+            # Use the method from your DriveModule
+            # returns a dict of {local_path: drive_link}
+            upload_links = drive.sync_files_to_drive(
+                file_paths=files_to_sync, 
+                user_metadata=book_metadata
+            )
 
-    #     if pdf_path and os.path.exists(pdf_path):
-    #         _, shared_debug_run_id = upload_to_drive(pdf_path, pdf_name, config, mode="debug")
-    #     if coords_path and os.path.exists(coords_path):
-    #         upload_to_drive(coords_path, pdf_name, config, mode="debug",
-    #                         existing_run_id=shared_debug_run_id)
+            if upload_links:
+                logger.info(f"✅ Drive Sync Complete. Files available at: {list(upload_links.values())[0]}")
+        except Exception as e:
+            logger.error(f"❌ Drive Sync failed: {e}")
 
     # ── Pipeline ────────────────────────────────────────────────────────
     try:
@@ -170,9 +182,10 @@ def run_pipeline(pdf_name, book_metadata, config: ProjectConfig):
                     result = next(extraction_gen)
                     if isinstance(result, list):
                         for block in result:
-                            block["board_name"]   = book_metadata.get("board_name")
-                            block["subject_name"] = book_metadata.get("subject_name")
-                            block["standard"]     = book_metadata.get("standard")
+                            block["board_name"]   = book_metadata.get("Board")
+                            block["subject_name"] = book_metadata.get("Subject")
+                            block["standard"]     = book_metadata.get("Class")
+                            block["medium"]       = book_metadata.get("Medium")
                             temp_file.write(json.dumps(block, ensure_ascii=False) + "\n")
                             all_final_blocks.append(block)
                             state["total_blocks"] += 1
@@ -196,7 +209,7 @@ def run_pipeline(pdf_name, book_metadata, config: ProjectConfig):
         # ✅ PHASES 3: Hierarchy + Asset linking
         run_hierarchy_and_linking()
 
-        # sync_all_to_cloud()
+        sync_all_to_cloud()
 
     except (Exception, KeyboardInterrupt) as e:
         save_data()
@@ -215,11 +228,12 @@ def run_pipeline(pdf_name, book_metadata, config: ProjectConfig):
 def main():
     cfg = ProjectConfig()
     book_metadata = {
-        "board_name":   "Maharashtra",                                                            
-        "standard":     "10",
-        "subject_name": "Mathematics",
+        "Medium": "English",
+        "Board":   "CG",                                                            
+        "Class":     "6",
+        "Subject": "Mathematics",
     }
-    run_pipeline(pdf_name="MH_15p", book_metadata=book_metadata, config=cfg)
+    run_pipeline(pdf_name="CG_Class_6_Mathematics_5p", book_metadata=book_metadata, config=cfg)
 
 
 if __name__ == "__main__":
