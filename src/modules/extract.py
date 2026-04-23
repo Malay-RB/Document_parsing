@@ -31,34 +31,8 @@ from processing.page_strategy import (
     _detect_from_corners
 )
 
-
-@track_performance
-def run_single_page(
-    image, page_no, models, layout_engine, ocr_engine, classifier,
-    pg_no_strategy, hierarchy_data, context_tracker,
-    visuals_dir=None
-):
-    """Handles layout detection, pagination resolution, and block classification for a single page."""
-    page_start = time.perf_counter()
-
-
-    print(f"\n📄 Processing page: {page_no}")
-
-    # --- 1. SETUP DEBUG CANVAS ---
-    debug_img = image.copy()
-    draw = ImageDraw.Draw(debug_img)
-    width, height = image.size
-
-    VISUALS_DIR = r"C:\arkRohan\document_parsing\Document_parsing\src\extracted_image"
-    save_dir = visuals_dir if visuals_dir else VISUALS_DIR
-    os.makedirs(save_dir, exist_ok=True)
-
-    print(f"📁 Visuals directory: {save_dir}")
-
-    ocr_type = ProjectConfig.EXTRACTION_MODEL
-
-    # --- TOC HELPER ---
-    def get_toc_metadata(current_page, h_data):
+# --- TOC HELPER ---
+def get_toc_metadata(current_page, h_data):
         """
         Finds the correct hierarchy for a page.
         Prioritizes Subtopics while preserving Chapter context.
@@ -111,6 +85,33 @@ def run_single_page(
                 }
 
         return {"chapter_id": None, "chapter_name": None}
+
+
+@track_performance
+def run_single_page(
+    image, page_no, models, layout_engine, ocr_engine, classifier,
+    pg_no_strategy, hierarchy_data, context_tracker,
+    visuals_dir=None
+):
+    """Handles layout detection, pagination resolution, and block classification for a single page."""
+    page_start = time.perf_counter()
+
+
+    print(f"\n📄 Processing page: {page_no}")
+
+    # --- 1. SETUP DEBUG CANVAS ---
+    debug_img = image.copy()
+    draw = ImageDraw.Draw(debug_img)
+    width, height = image.size
+
+    VISUALS_DIR = r"C:\arkRohan\document_parsing\Document_parsing\src\extracted_image"
+    save_dir = visuals_dir if visuals_dir else VISUALS_DIR
+    os.makedirs(save_dir, exist_ok=True)
+
+    print(f"📁 Visuals directory: {save_dir}")
+
+    ocr_type = ProjectConfig.EXTRACTION_MODEL
+
 
     # --- 2. LAYOUT ANALYSIS ---
     raw_boxes = layout_engine.detect(image)
@@ -212,10 +213,10 @@ def run_single_page(
         draw.text((coords[0], max(0, coords[1] - 18)), f"{i+1}:{box.label}", fill="red")
 
         # --- TOC METADATA (Preserved) ---
-        chapter_info = get_toc_metadata(printed_no, hierarchy_data)
-        u_id = chapter_info.get("unit_id") or "0"
-        c_id = chapter_info.get("chapter_id") or "0"
-        current_block_id = f"u{u_id}_c{c_id}_p{page_no}_b{layout_index}"
+        chapter_info = {}
+        u_id = "0"
+        c_id = "0"
+        current_block_id = f"p{page_no}_b{layout_index}"  # simplified, no TOC ids yet
 
         
         label_group = LABEL_MAP.get(box.label) 
@@ -289,7 +290,6 @@ def run_single_page(
             "section_id": block_section_id,
             "parent_section_block_id": parent_link,
             "semantic_role": role,
-            "toc_link": chapter_info,
             "asset": asset_path,
             "block_index": layout_index,
              "page_candidates": {
@@ -454,22 +454,8 @@ def run_deep_extraction(pdf_filename, input_path=None, output_path=None, start_p
 
     except (Exception, KeyboardInterrupt) as e:
         logger.error(f"💥 Pipeline Error: {e}. Attempting data recovery...")
-        # Emergency yield of buffered blocks
-        if pending_buffer:
-            for _, old_blocks in pending_buffer:
-                # 🎯 FIX: Build id_map for recovery
-                rec_id_map = { b["block_index"]: b["id"] for b in old_blocks }
-                recovered_batch = []
-                for b in old_blocks:
-                    transformed = transform_structure(
-                        b, block_index=b["block_index"], id_map=rec_id_map
-                    )
-                    transformed["page_candidates"] = b.get("page_candidates", {})
-                    transformed["pdf_page"] = b.get("pdf_page")
-                    recovered_batch.append(transformed)
-                yield recovered_batch
-            pending_buffer.clear()
-        raise e 
+        logger.info(f"🛟 Recovery: pending_buffer has {len(pending_buffer)} pages — will be processed in finally block")
+        raise e   # ← just re-raise, finally will still run and handle everything
 
     finally:
         logger.info(f"🔍 DEBUG: pending_buffer has {len(pending_buffer)} pages")
@@ -518,11 +504,36 @@ def run_deep_extraction(pdf_filename, input_path=None, output_path=None, start_p
             if offset is not None:
                 for b in all_blocks_for_correction:
                     corrected = b["pdf_page"] + offset
-                    b["printed_page"] = corrected  # internal, used during correction
-                    b["page_number"] = corrected   # final JSON key
-                logger.info(f"✅ Applied offset {offset} to all blocks")
+                    b["printed_page"] = corrected
+                    b["page_number"] = corrected
+
+                    # ✅ NOW do TOC linking using the corrected page number
+                    toc = get_toc_metadata(corrected, hierarchy)
+                    b["unit_id"]      = toc.get("unit_id")
+                    b["unit_name"]    = toc.get("unit_name")
+                    b["chapter_id"]   = toc.get("chapter_id")
+                    b["chapter_name"] = toc.get("chapter_name")
+                    b["subtopic_id"]  = toc.get("subtopic_id")
+                    b["subtopic_name"]= toc.get("subtopic_name")
+
+                    u = b.get("unit_id") or "0"
+                    c = b.get("chapter_id") or "0"
+                    p = b.get("pdf_page")
+                    bi = b.get("block_index")
+                    b["id"] = f"u{u}_c{c}_p{p}_b{bi}"
+
+                logger.info(f"✅ Applied offset {offset} to all blocks + TOC linked")
             else:
-                logger.warning("⚠️ No offset found — printed_page left as-is")
+                # ✅ No offset, but still link TOC using pdf_page as fallback
+                logger.warning("⚠️ No offset found — linking TOC using raw pdf_page")
+                for b in all_blocks_for_correction:
+                    toc = get_toc_metadata(b["pdf_page"], hierarchy)
+                    b["unit_id"]      = toc.get("unit_id")
+                    b["unit_name"]    = toc.get("unit_name")
+                    b["chapter_id"]   = toc.get("chapter_id")
+                    b["chapter_name"] = toc.get("chapter_name")
+                    b["subtopic_id"]  = toc.get("subtopic_id")
+                    b["subtopic_name"]= toc.get("subtopic_name")
 
         # YIELD CORRECTED BLOCKS
         if all_blocks_for_correction:
@@ -530,8 +541,8 @@ def run_deep_extraction(pdf_filename, input_path=None, output_path=None, start_p
             for b in all_blocks_for_correction:
                 page_batch_map.setdefault(b["pdf_page"], []).append(b)
 
-            for old_pdf_no, _ in pending_buffer:
-                yield page_batch_map.get(old_pdf_no, [])
+            for pdf_page_no in sorted(page_batch_map.keys()):
+                yield page_batch_map[pdf_page_no]
 
         # DEBUG PDF
         if len(master_pdf.pages) > 0:
