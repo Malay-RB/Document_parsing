@@ -77,11 +77,19 @@ def run_pipeline(pdf_name, book_metadata, config: ProjectConfig):
     def save_data():
         if all_final_blocks:
             logger.info(f":floppy_disk: Saving {len(all_final_blocks)} blocks → {final_output_path}")
+            
+            # ✅ ADD THIS — strip unwanted keys only for final JSON
+            keys_to_remove = ["page_candidates", "printed_page", "board_name", "subject_name", "standard", "medium"]
+            cleaned_blocks = []
+            for block in all_final_blocks:
+                clean = {k: v for k, v in block.items() if k not in keys_to_remove}
+                cleaned_blocks.append(clean)
+            
             with open(final_output_path, "w", encoding="utf-8") as f:
-                json.dump(all_final_blocks, f, indent=4, ensure_ascii=False)
+                json.dump(cleaned_blocks, f, indent=4, ensure_ascii=False)  # ← use cleaned_blocks
 
             if config.ENABLE_YAML_EXPORT:
-                convert_json_to_yaml(all_final_blocks, yaml_output_path)
+                convert_json_to_yaml(cleaned_blocks, yaml_output_path)      # ← use cleaned_blocks here too
         else:
             logger.warning(":warning: No blocks processed.")
             if os.path.exists(temp_jsonl_path):
