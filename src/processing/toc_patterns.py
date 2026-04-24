@@ -133,6 +133,21 @@ _BACKMATTER_RE = re.compile(
     r"परियोजना|क्रियाकलाप|विषय-सूची)",
     re.IGNORECASE | re.UNICODE,
 )
+BACKMATTER_HINTS = [
+    "exercise", "summary", "map", "project", "activity",
+    "question", "questions", "worksheet", "test", "revision",
+    "assessment", "practice", "appendix", "glossary",
+    "bibliography", "index", "answers", "mcq", "case study",
+    "self assessment", "competency", "hots", "model paper",
+    "sample paper", "revision test", "additional questions",
+    "assertion", "reason", "lab manual",
+
+    # Hindi
+    "अभ्यास", "प्रश्न", "प्रश्नावली", "पुनरावृत्ति", "सारांश",
+    "मानचित्र", "परियोजना", "क्रियाकलाप", "कार्यपत्रक",
+    "परीक्षण", "मूल्यांकन", "अतिरिक्त", "उदाहरण",
+    "प्रयोग", "स्वमूल्यांकन"
+]
 
 # Subject/section header in table-style TOCs — standalone ALL-CAPS line with
 # no page number and no chapter-ID prefix.
@@ -764,7 +779,12 @@ def robust_transform_logic(self, raw_pages: list) -> list:
         if entry is None and last_chapter_int > 0:
             # FIX (Bug 3): back-matter lines must never become subtopics.
             # Store them as appendix entries with chapter_id=None instead.
-            if _BACKMATTER_RE.match(cleaned):
+            is_backmatter = (
+                _BACKMATTER_RE.match(cleaned)
+                or any(word in cleaned.lower() for word in BACKMATTER_HINTS)
+            )
+
+            if is_backmatter:
                 sp, ep, _ = _extract_page_range(cleaned)
                 bm_name = _safe_sanitize(_strip_trailing_junk(
                     re.sub(r'\d+', '', cleaned).strip()
