@@ -33,7 +33,7 @@ def run_pipeline(pdf_name, book_metadata, config: ProjectConfig):
     debug_mode = config.DEBUG_MODE
 
     in_path, out_path = config.get_active_paths(force_prod=True)
-    setup_logger(debug_mode=config.DEBUG_MODE) #logger Initialization
+    setup_logger(debug_mode=debug_mode) #logger Initialization
 
     logger.info(":brain: Initializing Global AI Brain...")
     shared_models = ModelLoader().load()
@@ -213,10 +213,10 @@ def run_pipeline(pdf_name, book_metadata, config: ProjectConfig):
 
     except (Exception, KeyboardInterrupt) as e:
         save_data()
-        run_hierarchy_and_linking()   # best-effort on failure too
-        # sync_all_to_cloud()
+        run_hierarchy_and_linking()
+        sync_all_to_cloud()
         logger.error(f"💥 FATAL PIPELINE ERROR: {e}")
-        logger.error("🛑 Pipeline terminated. Final assets synced to Drive.")
+        logger.error("🛑 Pipeline terminated.")
         logger.info(f":sparkles: Total Blocks: {state['total_blocks']}")
 
     finally:
@@ -229,11 +229,11 @@ def main():
     cfg = ProjectConfig()
     book_metadata = {
         "Medium": "English",
-        "Board":   "CG",                                                            
-        "Class":     "6",
+        "Board":   "TN",                                                            
+        "Class":     "8",
         "Subject": "Mathematics",
     }
-    run_pipeline(pdf_name="CG_Class_6_Mathematics_5p", book_metadata=book_metadata, config=cfg)
+    run_pipeline(pdf_name="Class_8_Mathematics_TN_20p", book_metadata=book_metadata, config=cfg)
 
 
 if __name__ == "__main__":

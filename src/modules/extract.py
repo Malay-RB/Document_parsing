@@ -561,7 +561,7 @@ def run_deep_extraction(pdf_filename, input_path=None, output_path=None, start_p
 if __name__ == "__main__":
     setup_logger(debug_mode=True)
     cfg = ProjectConfig()
-    TARGET = "NCERT10M_test"
+    TARGET = "Class_8_Mathematics_English_TN_1p"
     
     all_blocks = []
     caught_files = {}

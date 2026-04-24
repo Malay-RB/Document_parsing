@@ -8,6 +8,8 @@ import asyncio
 import time
 from concurrent.futures import ThreadPoolExecutor
 from config import ProjectConfig
+import difflib
+import re
 
 def recursive_extract(image_crop, layout_engine, ocr_engine, ocr_type, depth=0, max_depth=3):
     if depth > max_depth:
@@ -80,7 +82,7 @@ def clean_asset_name(text):
 
 
 
-def run_scout_phase(image, boxes, ocr_engine, model, page_no, width, height):
+# def run_scout_phase(image, boxes, ocr_engine, model, page_no, width, height):
     """Detects TOC triggers (Contents/Index) ONLY if they are the standalone text of a box."""
     logger.debug(f"🔍 [Scout] Using '{model}' engine for Page {page_no}")
     if not boxes: 
@@ -133,32 +135,43 @@ def check_Toc_percentage(images, toc):
     return False, []
 
 def run_sync_phase(image, boxes, ocr_engine, model, target_anchor, height, width):
-    """Checks if the previously identified TOC anchor appears at the top of the current page."""
-    if target_anchor is None:
-        logger.error("❌ Sync Phase failed: target_anchor is None. TOC extraction likely failed.")
-        return False
+    """
+    Analyzes the current page's top 3 boxes.
+    Returns (best_score, best_text) found in a SectionHeader or Title.
+    """
+    target_anchor = target_anchor.lower().strip()
+    best_page_score = -1.0  # Default if no SectionHeader found
+    best_page_text = "N/A"
 
-    # Check first 3 boxes 
+    # Analyze only the top 3 boxes as requested
     for i, box in enumerate(boxes[:3]):
-        if box.label in ["SectionHeader", "Text", "Title", "PageHeader"]:
-            x1, y1, x2, y2 = map(int, box.bbox)
+        label = box.label
+        x1, y1, x2, y2 = map(int, box.bbox)
+        
+        # Crop with safety padding
+        crop = image.crop((max(0, x1-5), max(0, y1-20), min(width, x2+5), min(height, y2+20)))
+        
+        raw_ocr = ocr_engine.extract(crop, model)
+        
+        if isinstance(raw_ocr, list) and len(raw_ocr) > 0:
+            # Extract text from every detected snippet in the crop and join
+            detected_text = " ".join([str(res[1]) for res in raw_ocr]).lower().strip()
+        else:
+            # Fallback if the OCR returns a single string or unexpected format
+            detected_text = str(raw_ocr).lower().strip()
+        
+        # Log Box Details for terminal visibility
+        logger.info(f"📄 Box {i+1} | Label: {label: <15} | Text Snippet: {detected_text[:50]}")
+
+        # Sync matching logic: Only trust structural headers
+        if label in ["SectionHeader", "Title", "Heading"]:
+            similarity = difflib.SequenceMatcher(None, target_anchor, detected_text).ratio()
             
-            if y1 < (height * 0.3):
-                crop = image.crop((max(0, x1-5), max(0, y1-20), min(width, x2+5), min(height, y2+20)))
-                detected_text = ocr_engine.extract(crop, model=model).lower().strip()
-                
-                if detected_text and len(detected_text) > 3:
-                    anchor_words = set(re.findall(r'\w+', target_anchor.lower()))
-                    detected_words = set(re.findall(r'\w+', detected_text.lower()))
-                    
-                    # DEBUG: Fuzzy matching word sets are for debugging only
-                    logger.debug(f"🔍 [Sync Matcher] Block {i+1}: Target={anchor_words} | Found={detected_words}")
-                    
-                    if anchor_words.issubset(detected_words) and anchor_words:
-                        # INFO: Critical milestone for pagination lock
-                        logger.info(f"✅ SYNC MATCH: Anchor '{target_anchor}' confirmed in '{detected_text}'")
-                        return True
-    return False
+            if similarity > best_page_score:
+                best_page_score = similarity
+                best_page_text = detected_text
+
+    return best_page_score, best_page_text
 
 def extract_page_block(image, box, safe_coord, models, ocr_engine, ocr_type, layout_engine=None):
     """Main router for individual blocks with Defensive Cropping and Visual Linking."""

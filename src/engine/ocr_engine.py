@@ -36,8 +36,7 @@ class OCREngine:
         """
         Extracts text based on the specified mode.
         Models: 'surya', 'rapid', 'easy'
-        """
-        
+        """       
         # Pre-processing: Prepare numpy for Easy/Rapid and PIL for Surya
         if isinstance(crop, np.ndarray):
             pil_crop = Image.fromarray(crop).convert("RGB")

@@ -11,7 +11,7 @@ from loaders.pdf_loader import PDFLoader
 from engine.layout_engine import LayoutEngine
 from engine.ocr_engine import OCREngine
 from modules.toc_extractor import TOCProcessor
-from processing.pipeline_utils import run_scout_phase, run_sync_phase,check_Toc_percentage
+from processing.pipeline_utils import run_sync_phase,check_Toc_percentage
 from processing.optimize_layout import filter_overlapping_boxes, get_unified_sorting
 from exporters.exporter import PDFDebugExporter
 from processing.logger import logger
@@ -235,7 +235,6 @@ def run_scout_sync(pdf_name, input_path=None, output_path=None, models=None, con
         #     # Explicitly set extraction to start from the 6th page
         #     content_start = scan_start + 5 
 
-        # Only run OCR if we have valid TOC pages
         found_toc, selected_pages = check_Toc_percentage(images, toc)
 
         if not found_toc:
@@ -275,38 +274,77 @@ def run_scout_sync(pdf_name, input_path=None, output_path=None, models=None, con
         if start_index < 0 or start_index >= len(images):
             raise ValueError("content_start is out of range")
 
+        sync_candidates = []
+        search_limit = 10
+        search_start_page = start_index + 1 
+
+        logger.info(f"🚀 INITIALIZING GLOBAL SYNC | Range: P.{search_start_page} to P.{search_start_page + search_limit}")
+        logger.info(f"🎯 Target Anchor: '{state['target_anchor']}'")
+
         for index, image in enumerate(images[start_index:], start=start_index):
-            page_no = index + 1  # actual page number
-
-            image = pdf_loader.load_page(page_no)
-            width, height = image.size
+            page_no = index + 1
             
-             # Detect Layout
-            raw_boxes = layout_engine.detect(image)
-            boxes = get_unified_sorting(filter_overlapping_boxes(raw_boxes))
-
-            result = run_sync_phase(
-                image,
-                boxes,
-                ocr_engine,
-                extraction_model,
-                state["target_anchor"],
-                height,
-                width
-            )
-
-            if result:
-                logger.info(f"✅ SYNC SUCCESSFUL! Match found on Page: {page_no}")
-                state["sync_completed"] = True
-                state["scout_images"].append(draw_layout(image, boxes))
-                content_start = page_no
+            if page_no > (search_start_page + search_limit):
+                logger.info(f"⏹️ Search limit reached ({search_limit} pages). Evaluating candidates...")
                 break
 
-            # optional: collect results
-            # results.append(result)
+            logger.info(f"📑 Scanning Page {page_no}...")
+            
+            try:
+                image = pdf_loader.load_page(page_no)
+                width, height = image.size
+                
+                raw_boxes = layout_engine.detect(image)
+                boxes = get_unified_sorting(filter_overlapping_boxes(raw_boxes))
 
-        print("content_start",content_start)
-        print("page_no",page_no)
+                score, text = run_sync_phase(
+                    image, boxes, ocr_engine, extraction_model, 
+                    state["target_anchor"], height, width
+                )
+
+                sync_candidates.append({
+                    "page_no": page_no,
+                    "score": score,
+                    "text": text,
+                    "image": image,
+                    "boxes": boxes
+                })
+                
+                if score > -1.0:
+                    logger.info(f"   📊 Best match on P.{page_no}: {score:.4f} ('{text[:30]}...')")
+                else:
+                    logger.info(f"   🚫 No SectionHeaders found on P.{page_no}")
+
+            except Exception as e:
+                logger.error(f"   ❌ Error on P.{page_no}: {str(e)}")
+                continue
+
+        # --- FINAL DECISION LOGIC ---
+
+        # Sort candidates by score (highest first)
+        sync_candidates.sort(key=lambda x: x["score"], reverse=True)
+
+        if sync_candidates and sync_candidates[0]["score"] > -1.0:
+            winner = sync_candidates[0]
+            content_start = winner["page_no"]
+            
+            logger.info("-" * 50)
+            logger.info(f"🏆 SYNC DECISION: SUCCESS")
+            logger.info(f"   Winner Page   : {winner['page_no']}")
+            logger.info(f"   Winner Score  : {winner['score']:.4f}")
+            logger.info(f"   Winner Text   : '{winner['text']}'")
+            logger.info("-" * 50)
+        else:
+            content_start = search_start_page
+            logger.warning("-" * 50)
+            logger.warning(f"⚠️ SYNC DECISION: FALLBACK TRIGGERED")
+            logger.warning(f"   Reason        : No valid SectionHeaders detected in search range.")
+            logger.warning(f"   Action        : Defaulting to first page after TOC (P.{content_start})")
+            logger.warning("-" * 50)
+
+        # Critical state updates
+        state["sync_completed"] = True
+        content_start_page = content_start  # Final variable for extraction phase
 
 
 

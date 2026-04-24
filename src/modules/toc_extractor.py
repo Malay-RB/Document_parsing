@@ -197,7 +197,7 @@ class TOCProcessor:
         base_score = None
 
         DROP_THRESHOLD = 10
-        START_THRESHOLD = 80
+        START_THRESHOLD = 50
 
         # ================================
         # STEP 1: OCR + SCORE
