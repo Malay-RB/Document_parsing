@@ -82,7 +82,8 @@ def update_chapter_ids(data, prefix):
 
 def process_json(input_file, output_file):
     # Load JSON
-    with open(input_file, "r") as f:
+    # with open(input_file, "r") as f:
+    with open(input_file, "r", encoding="utf-8") as f:
         data = json.load(f)
 
     new_data = deepcopy(data)
@@ -100,8 +101,9 @@ def process_json(input_file, output_file):
     new_data = update_chapter_ids(new_data, prefix)
 
     # Step 5: Save
-    with open(output_file, "w") as f:
-        json.dump(new_data, f, indent=2)
+    # with open(output_file, "w") as f:
+    with open(output_file, "w", encoding="utf-8") as f:
+        json.dump(new_data, f, indent=2, ensure_ascii=False)
 
     print(f":white_check_mark: Done! Prefix: {prefix}")
 
