@@ -26,8 +26,12 @@ class ProjectConfig:
     TEST_OUTPUT = os.path.join(BASE_STR, "tests", "test_output")
 
     # --- AI & EXTRACTION SETTINGS ---
-    TOC_EXTRACTION_MODEL = "surya"
-    EXTRACTION_MODEL = "easy"
+    
+    LAYOUT_MODEL = "surya_layout"
+    TOC_EXTRACTION_MODEL = "surya_recognition"
+    TEXT_EXTRACTION_MODEL = "easy_ocr"
+    MATH_EXTRACTION_MODEL = "pix2text_latex"
+
     SCOUT_LIMIT = 25
     PDF_SCALE = 4.0
     PG_NO_STRATEGY = "AUTO"

@@ -27,21 +27,21 @@ from config import ProjectConfig
 
 class TOCProcessor:
     def __init__(self, ocr_engine=None, models = None):
-        # Auto-detect hardware
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-        os.environ["SURYA_DEVICE"] = device
-        os.environ["TORCH_DEVICE"] = device
+        # # Auto-detect hardware
+        # device = "cuda" if torch.cuda.is_available() else "cpu"
+        # os.environ["SURYA_DEVICE"] = device
+        # os.environ["TORCH_DEVICE"] = device
 
-        print(f":hammer_and_wrench:  [TOC_INIT] Initializing Models on {device.upper()}...")
+        # print(f":hammer_and_wrench:  [TOC_INIT] Initializing Models on {device.upper()}...")
 
-        models = ModelLoader().load()
-        self.foundation = FoundationPredictor(checkpoint=settings.LAYOUT_MODEL_CHECKPOINT)
-        self.layout_predictor = LayoutPredictor(self.foundation)
-        self.detection_predictor = DetectionPredictor()
-        self.recognition_predictor = RecognitionPredictor(self.foundation)
-        self.easyocr_reader = models.easyocr_reader
+        # models = ModelLoader().load()
+        # self.foundation = FoundationPredictor(checkpoint=settings.LAYOUT_MODEL_CHECKPOINT)
+        # self.layout_predictor = LayoutPredictor(self.foundation)
+        # self.detection_predictor = DetectionPredictor()
+        # self.recognition_predictor = RecognitionPredictor(self.foundation)
+        # self.easyocr_reader = models.easyocr_reader
 
-        self.ocr_engine = ocr_engine
+        # self.ocr_engine = ocr_engine
 
         # Configuration & Thresholds
         self.y_threshold = 25

@@ -11,7 +11,6 @@ AUTO_STATE = {
     "history": {
         "HEADER": [],
         "FOOTER": [],
-        "CORNERS": []
     },
     "page_count": 0,
 }
@@ -54,7 +53,7 @@ def _detect_from_header(image, boxes, safe_coords, ocr_engine, classifier, ocr_t
             continue
             
         x1, y1, x2, y2 = map(int, safe_coords[i])
-        p_text = ocr_engine.extract(image.crop((x1, y1, x2, y2)), model=ocr_type).strip()
+        p_text = ocr_engine.extract(image.crop((x1, y1, x2, y2)), model_name="easy_ocr").strip()
         
         # DEBUG: Noise reduction - only log the "check" to the debug file
         logger.debug(f"🔍 [Header Check] Box {i} | Label: {label} | Text: '{p_text}'")
@@ -80,7 +79,7 @@ def _detect_from_footer(image, boxes, safe_coords, ocr_engine, classifier, ocr_t
             continue
             
         x1, y1, x2, y2 = map(int, safe_coords[idx])
-        p_text = ocr_engine.extract(image.crop((x1, y1, x2, y2)), model=ocr_type).strip()
+        p_text = ocr_engine.extract(image.crop((x1, y1, x2, y2)), model_name="easy_ocr").strip()
         
         if p_text:
             logger.debug(f"  ∟ Footer Box {idx} Text: '{p_text}'")
@@ -92,32 +91,7 @@ def _detect_from_footer(image, boxes, safe_coords, ocr_engine, classifier, ocr_t
             
     return None
 
-def _detect_from_corners(image, boxes, safe_coords, ocr_engine, classifier, ocr_type, height):
-    width = image.size[0]
-    for i, box in enumerate(boxes):
-        label = getattr(box, 'label', None) or (box.get('label') if isinstance(box, dict) else None)
-        if LABEL_MAP.get(label) == "VISUAL":
-            continue
-            
-        x1, y1, x2, y2 = map(int, safe_coords[i])
-
-        # Corner zone calculation
-        near_left = x1 < width * 0.15
-        near_right = x2 > width * 0.85
-        near_top = y1 < height * 0.15
-        near_bottom = y2 > height * 0.85
-
-        if (near_top or near_bottom) and (near_left or near_right):
-            p_text = ocr_engine.extract(image.crop((x1, y1, x2, y2)), model=ocr_type)
-            # DEBUG: Corner candidate checks
-            logger.debug(f"📐 Corner Candidate at {[x1,y1,x2,y2]} | Text: '{p_text}'")
-            
-            val = _extract_page_val(p_text, classifier, "Corner")
-            if val is not None:
-                return val
-    return None
-
-def find_printed_page_no(image, boxes, safe_coords, ocr_engine, classifier, ocr_type, height, page_no_strategy="AUTO"):
+def find_printed_page_no(image, boxes, safe_coords, ocr_engine, classifier, ocr_type, page_no_strategy="AUTO"):
     logger.debug(f"🛠️  Pagination Strategy: {page_no_strategy}")
 
     if page_no_strategy == "HEADER":
@@ -128,28 +102,21 @@ def find_printed_page_no(image, boxes, safe_coords, ocr_engine, classifier, ocr_
         return _detect_from_footer(image, boxes, safe_coords, ocr_engine, classifier, ocr_type)
         # ✅ removed height
 
-    elif page_no_strategy == "CORNERS":
-        return _detect_from_corners(image, boxes, safe_coords, ocr_engine, classifier, ocr_type, height)
-        # ✅ height stays — corners needs it for zone calculation
 
     elif page_no_strategy == "AUTO":
         AUTO_STATE["page_count"] += 1
 
         header_val = _detect_from_header(image, boxes, safe_coords, ocr_engine, classifier, ocr_type)         # ✅ no height
         footer_val = _detect_from_footer(image, boxes, safe_coords, ocr_engine, classifier, ocr_type)         # ✅ no height
-        corner_val = _detect_from_corners(image, boxes, safe_coords, ocr_engine, classifier, ocr_type, height) # ✅ height stays
 
         AUTO_STATE["history"]["HEADER"].append(header_val)
         AUTO_STATE["history"]["FOOTER"].append(footer_val)
-        AUTO_STATE["history"]["CORNERS"].append(corner_val)
 
         candidates = []
         if header_val is not None:
             candidates.append(header_val)
         if footer_val is not None:
             candidates.append(footer_val)
-        if corner_val is not None:
-            candidates.append(corner_val)
 
         if not candidates:
             return None
@@ -177,7 +144,6 @@ def finalize_auto_strategy():
     scores = {
         "HEADER": seq_length(AUTO_STATE["history"]["HEADER"]),
         "FOOTER": seq_length(AUTO_STATE["history"]["FOOTER"]),
-        "CORNERS": seq_length(AUTO_STATE["history"]["CORNERS"]),
     }
 
     best = max(scores, key=scores.get)

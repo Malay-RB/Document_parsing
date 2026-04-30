@@ -25,11 +25,9 @@ from processing.logger import logger, setup_logger
 from config import LABEL_MAP, ProjectConfig 
 from processing.pipeline_utils import extract_block_surya, extract_page_manual_concurrency
 
-from processing.page_strategy import (
-    _detect_from_header,
-    _detect_from_footer,
-    _detect_from_corners
-)
+from engine.pipeline_factory import PipelineFactory
+from engine.layout_engine import LayoutEngine
+from engine.ocr_engine import OCREngine
 
 # --- TOC HELPER ---
 def get_toc_metadata(current_page, h_data):
@@ -94,6 +92,8 @@ def run_single_page(
     visuals_dir=None
 ):
     """Handles layout detection, pagination resolution, and block classification for a single page."""
+
+
     page_start = time.perf_counter()
 
 
@@ -110,11 +110,13 @@ def run_single_page(
 
     print(f"📁 Visuals directory: {save_dir}")
 
-    ocr_type = ProjectConfig.EXTRACTION_MODEL
+    ocr_type = ProjectConfig.TEXT_EXTRACTION_MODEL
+
+    layout_model = ProjectConfig.LAYOUT_MODEL
 
 
     # --- 2. LAYOUT ANALYSIS ---
-    raw_boxes = layout_engine.detect(image)
+    raw_boxes = layout_engine.detect(image, model_name=layout_model)
     boxes = get_unified_sorting(filter_overlapping_boxes(raw_boxes, 0.5), 40)
 
     print(f"🔍 Total detected boxes: {len(boxes)}")
@@ -173,8 +175,7 @@ def run_single_page(
         safe_coords,
         ocr_engine,
         classifier,
-        ocr_type,          # ← ocr_type
-        height,            # ← height
+        ocr_type,          # ← ocr_type          
         pg_no_strategy,    # ← strategy
     )
     print(f"RAW detected page: {raw_detected_no}")
@@ -184,11 +185,9 @@ def run_single_page(
     if pg_no_strategy == "AUTO":
         header_val = AUTO_STATE["history"]["HEADER"][-1]
         footer_val = AUTO_STATE["history"]["FOOTER"][-1]
-        corner_val = AUTO_STATE["history"]["CORNERS"][-1]
     else:
         header_val = raw_detected_no if pg_no_strategy == "HEADER" else None
         footer_val = raw_detected_no if pg_no_strategy == "FOOTER" else None
-        corner_val = raw_detected_no if pg_no_strategy == "CORNERS" else None
     
 
     # temporary value (will be corrected later)
@@ -198,7 +197,6 @@ def run_single_page(
     f"📌 Page Candidates → "
     f"HEADER: {header_val} | "
     f"FOOTER: {footer_val} | "
-    f"CORNERS: {corner_val}"
 )
 
     # --- BLOCK PROCESSING (Assembly & Metadata) ---
@@ -295,7 +293,6 @@ def run_single_page(
              "page_candidates": {
         "HEADER": header_val,
         "FOOTER": footer_val,
-        "CORNERS": corner_val
     }
         }
         page_blocks.append(block_data)
@@ -390,19 +387,26 @@ def run_deep_extraction(pdf_filename, input_path=None, output_path=None, start_p
     total_pages = pdf_loader.get_total_pages()
     master_pdf = pikepdf.Pdf.new()
 
-    if models is None:
-        logger.info("⚙️ Initializing engines...")
-        models = ModelLoader().load()
+    # if models is None:
+    #     logger.info("⚙️ Initializing engines...")
+    #     models = ModelLoader().load()
     
-    layout_engine = LayoutEngine(models.layout_predictor)
-    ocr_engine = OCREngine(
-        recognition_predictor=models.recognition_predictor,
-        detection_predictor=models.detection_predictor,
-        rapid_text_engine=models.rapid_text_engine,
-        rapid_latex_engine=models.rapid_latex_engine,
-        easyocr_reader=models.easyocr_reader,
+    # layout_engine = LayoutEngine(models.layout_predictor)
+    # ocr_engine = OCREngine(
+    #     recognition_predictor=models.recognition_predictor,
+    #     detection_predictor=models.detection_predictor,
+    #     rapid_text_engine=models.rapid_text_engine,
+    #     rapid_latex_engine=models.rapid_latex_engine,
+    #     easyocr_reader=models.easyocr_reader,
         
-    )
+    # )
+
+    # Factory Initialization
+    global_factory = PipelineFactory()
+
+    layout_engine = LayoutEngine(global_factory)
+    ocr_engine = OCREngine(global_factory)
+    
     
     classifier = SemanticClassifier()
     context_tracker = ContextTracker()
@@ -420,7 +424,6 @@ def run_deep_extraction(pdf_filename, input_path=None, output_path=None, start_p
             logger.info(f"📄 Processing Physical Page {page_no}/{total_pages}")
             image = pdf_loader.load_page(page_no)
             
-            # Unpack the 3rd return value (debug_img)
             current_page_blocks, debug_img = run_single_page(
                 image, page_no, models, layout_engine, ocr_engine, 
                 classifier, pg_no_strategy, hierarchy, context_tracker=context_tracker, visuals_dir = book_visuals_dir
@@ -455,7 +458,7 @@ def run_deep_extraction(pdf_filename, input_path=None, output_path=None, start_p
     except (Exception, KeyboardInterrupt) as e:
         logger.error(f"💥 Pipeline Error: {e}. Attempting data recovery...")
         logger.info(f"🛟 Recovery: pending_buffer has {len(pending_buffer)} pages — will be processed in finally block")
-        raise e   # ← just re-raise, finally will still run and handle everything
+        raise e   
 
     finally:
         logger.info(f"🔍 DEBUG: pending_buffer has {len(pending_buffer)} pages")
@@ -507,6 +510,7 @@ def run_deep_extraction(pdf_filename, input_path=None, output_path=None, start_p
                     b["printed_page"] = corrected
                     b["page_number"] = corrected
 
+                    # TOC Linking
                     # ✅ NOW do TOC linking using the corrected page number
                     toc = get_toc_metadata(corrected, hierarchy)
                     b["unit_id"]      = toc.get("unit_id")
@@ -572,7 +576,7 @@ def run_deep_extraction(pdf_filename, input_path=None, output_path=None, start_p
 if __name__ == "__main__":
     setup_logger(debug_mode=True)
     cfg = ProjectConfig()
-    TARGET = "Class_8_Mathematics_English_TN_1p"
+    TARGET = "MH_1p"
     
     all_blocks = []
     caught_files = {}

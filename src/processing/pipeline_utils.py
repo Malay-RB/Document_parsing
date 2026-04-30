@@ -10,58 +10,32 @@ from concurrent.futures import ThreadPoolExecutor
 from config import ProjectConfig
 import difflib
 import re
+from engine.ocr_factory import OCRFactory
 
 def recursive_extract(image_crop, layout_engine, ocr_engine, ocr_type, depth=0, max_depth=3):
     if depth > max_depth:
         return ""
 
     # run layout detection on this crop
-    inner_boxes = layout_engine.detect(image_crop)
+    inner_boxes = layout_engine.detect(image_crop, model_name = ProjectConfig.LAYOUT_MODEL)
 
     if not inner_boxes:
-        # no sub-structure found, just OCR the whole thing
-        return ocr_engine.extract(image_crop, model=ocr_type)
+        return ocr_engine.extract(crop=image_crop, model_name=ProjectConfig.TEXT_EXTRACTION_MODEL)
 
-    # sub-boxes found — recurse into each
     texts = []
     for box in inner_boxes:
+        # Extract the specific coordinates for this single box
         x1, y1, x2, y2 = map(int, box.bbox)
+        
+        # Crop using the 4 coordinates safely
         sub_crop = image_crop.crop((x1, y1, x2, y2))
+        
+        # Recurse
         text = recursive_extract(sub_crop, layout_engine, ocr_engine, ocr_type, depth + 1, max_depth)
         if text:
             texts.append(text)
 
     return "\n".join(texts)
-
-def _rapid_latex_extract(image_crop, models):
-    """Terminal call — single equation crop into RapidLatex."""
-    try:
-        img_arr = np.array(image_crop)
-
-        if img_arr.size == 0 or np.ptp(img_arr) == 0:
-            return "[EMPTY_MATH_BLOCK]"
-
-        res = models.rapid_latex_engine(img_arr)
-        return res[0] if isinstance(res, tuple) else str(res)
-
-    except Exception as e:
-        logger.error(f"❌ RapidLatex recursive extract error: {e}")
-        return "[MATH_PROCESSING_ERROR]"
-
-def p2t_math_extract(image_crop, models, ocr_engine=None):
-    """Terminal math extractor — uses Pix2Text (primary) or RapidLatex (fallback)."""
-    engine = getattr(ProjectConfig, "MATH_ENGINE", "rapid")
-
-    if engine == "pix2text" and ocr_engine is not None:
-        try:
-            result = ocr_engine.extract(image_crop, model="pix2text")
-            if result:
-                logger.info(f"✅ Pix2Text math extracted {len(result)} chars.")
-                return result
-        except Exception as e:
-            logger.warning(f"⚠️ Pix2Text failed, falling back to RapidLatex: {e}")
-
-    return _rapid_latex_extract(image_crop, models)
 
 # --- HELPER UTILITIES FOR INTEGRATION ---
 
@@ -79,46 +53,6 @@ def clean_asset_name(text):
     
     clean = re.sub(r'[^a-zA-Z0-9\s]', '', text)
     return "_".join(clean.replace("\n", " ").split()[:5]).lower()
-
-
-
-# def run_scout_phase(image, boxes, ocr_engine, model, page_no, width, height):
-    """Detects TOC triggers (Contents/Index) ONLY if they are the standalone text of a box."""
-    logger.debug(f"🔍 [Scout] Using '{model}' engine for Page {page_no}")
-    if not boxes: 
-        return False, None
-
-    TOC_KEYWORDS = [
-        "content", "contents", "index", "table of content", "table of contents",
-        # Hindi
-        "सामग्री",
-        "अनुक्रम",
-        "अनुक्रमणिका",
-        "सूची",
-        "विषय-सूची",
-        "विषय सूची",
-        "विषय- सूची",
-        "विषय -सूची",
-    ]
-
-    # FIX: check top 3 boxes instead of just boxes[0]
-    # Hindi pages often have a page number or logo detected first
-    for first_box in boxes[:3]:
-        x1, y1, x2, y2 = map(int, first_box.bbox)
-        crop = image.crop((max(0, x1-5), max(0, y1-5), min(width, x2+5), min(height, y2+5)))
-
-        header_text = ocr_engine.extract(crop, model=model).lower().strip()
-        logger.info(f"📄 [Scout Page {page_no}] Checking box: '{header_text}'")
-
-        clean_trigger = re.sub(r'\s+', ' ', re.sub(r'[^\w\s]', '', header_text)).strip()
-
-        # FIX: substring check instead of exact match
-        # handles OCR noise like trailing spaces, merged/split words
-        if any(kw in clean_trigger for kw in TOC_KEYWORDS):
-            logger.info(f"🎯 TRIGGER: '{header_text}' matches TOC keyword on Page {page_no}.")
-            return True, header_text
-
-    return False, None
 
 def check_Toc_percentage(images, toc):
 
@@ -173,7 +107,7 @@ def run_sync_phase(image, boxes, ocr_engine, model, target_anchor, height, width
 
     return best_page_score, best_page_text
 
-def extract_page_block(image, box, safe_coord, models, ocr_engine, ocr_type, layout_engine=None):
+def extract_page_block(image, box, safe_coord, models, ocr_engine, ocr_type, layout_engine = None):
     """Main router for individual blocks with Defensive Cropping and Visual Linking."""
     # 1. Coordinate Validation & Clipping
     img_w, img_h = image.size
@@ -185,6 +119,10 @@ def extract_page_block(image, box, safe_coord, models, ocr_engine, ocr_type, lay
     
     group = LABEL_MAP.get(box.label, "TEXT")
     logger.info(f"DEBUG: Processing Block. Label='{box.label}', Assigned Group='{group}'") 
+
+    # text_handler = OCRFactory.create_handler(ocr_type, models)
+
+    
 
     # # 2. CAPTION HANDLING (Rule: Parent search ignores standalone Captions)
     # if group == "CAPTION":
@@ -227,24 +165,24 @@ def extract_page_block(image, box, safe_coord, models, ocr_engine, ocr_type, lay
 
     # 6. MATH ROUTING (With Exception Handling)
     if group == "MATH":
-        logger.debug("📐 Math Block detected. Routing to RapidLatex...")
+        
+        math_model = ProjectConfig.MATH_EXTRACTION_MODEL
+        logger.debug(f"📐 Math Block detected. Routing to {math_model}...")
+        
         try:
-            img_arr = np.array(crop)
-            
-            # Final check for empty array or uniform color (prevents division by zero warning)
-            if img_arr.size == 0 or np.ptp(img_arr) == 0:
-                return "[EMPTY_MATH_BLOCK]"
-                
-            res = models.rapid_latex_engine(img_arr)
-            return res[0] if isinstance(res, tuple) else str(res)
+            # The Engine and Wrapper handle all the array conversions and safety checks!
+            return ocr_engine.extract(crop=crop, model_name=math_model)
         except Exception as e:
-            logger.error(f"❌ RapidLatex engine crash avoided: {e}")
+            logger.error(f"❌ Math engine crash avoided: {e}")
             return "[MATH_PROCESSING_ERROR]"
 
     # 7. TEXT ROUTING
     logger.debug(f"📝 Text Block detected. Routing to {ocr_type} engine...")
     try:
-        text_result = ocr_engine.extract(crop, model=ocr_type)
+        # text_result = ocr_engine.extract(crop, model=ocr_type)
+        # text_result = text_handler.extract(crop)
+        image_crop = image.crop(safe_coord) 
+        text_result = ocr_engine.extract(crop=image_crop, model_name=ProjectConfig.TEXT_EXTRACTION_MODEL)
         
         if isinstance(text_result, bytes):
             return text_result.decode("utf-8", errors="ignore")

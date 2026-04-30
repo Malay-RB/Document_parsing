@@ -359,7 +359,7 @@ def run_scout_sync(pdf_name, input_path=None, output_path=None, models=None, con
 
         # Build the final report
         tracking_report = {
-            "content_start_page": page_no, # Tell Main.py where to start deep extraction
+            "content_start_page": content_start_page, 
             "hierarchy": full_hierarchy 
         }
 
