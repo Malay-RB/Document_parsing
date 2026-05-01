@@ -116,7 +116,7 @@ _D_SUBJECT_HEADER_RE = re.compile(
 _D_BACKMATTER_RE = re.compile(
     r"^(?:glossary|answers?|index|foreword|appendix|images?\s+and|bibliography|"
     r"acknowledgements?|about\s+the|method\s+of|note\s+to|letter\s+to|"
-    r"your\s+journey|preface|introduction|Learning Material Sheets|"
+    r"your\s+journey|preface|introduction|Learning Material Sheets|Vedic Ganit |"
     r"शब्दावली|उत्तर|अनुक्रमणिका|प्रस्तावना|परिशिष्ट|ग्रंथसूची|"
     r"आमुख|भूमिका|टिप्पणी|पत्र|"
     r"अभ्यास|प्रश्नावली|पुनरावृत्ति|सारांश|मानचित्र|"
@@ -950,46 +950,3 @@ def robust_transform_logic(
                         break
 
     return structured_data
-
-
-def patch_toc_processor(api_instance, config: TOCConfig = DEFAULT_CONFIG):
-    """
-    Patches robust_transform_logic onto an existing TOCProcessorAPI instance.
-    Pass a custom config to make the patched instance use different patterns.
-    """
-    import types
-    import functools
-    bound = functools.partial(robust_transform_logic, config=config)
-    api_instance.transform_logic = types.MethodType(bound, api_instance)
-    print("✅ [toc_patterns] Robust transform_logic patched successfully.")
-
-
-class RobustTOCProcessor:
-
-    def __init_subclass__(cls, **kwargs):
-        super().__init_subclass__(**kwargs)
-
-    def __new__(cls, *args, config: TOCConfig = DEFAULT_CONFIG, **kwargs):
-        import sys, os
-        sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-        try:
-            from modules.toc_extractor import TOCProcessorAPI
-        except ImportError:
-            import importlib.util, pathlib
-            spec = importlib.util.spec_from_file_location(
-                "toc_extractor",
-                pathlib.Path(__file__).parent / "toc_extractor.py"
-            )
-            mod = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(mod)
-            TOCProcessorAPI = mod.TOCProcessorAPI
-
-        instance = TOCProcessorAPI.__new__(TOCProcessorAPI)
-        TOCProcessorAPI.__init__(instance, *args, **kwargs)
-        patch_toc_processor(instance, config)
-        instance.__class__ = type(
-            "RobustTOCProcessor",
-            (TOCProcessorAPI,),
-            {"transform_logic": robust_transform_logic},
-        )
-        return instance
