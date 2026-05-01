@@ -197,7 +197,7 @@ class TOCProcessor:
         base_score = None
 
         DROP_THRESHOLD = 10
-        START_THRESHOLD = 65
+        START_THRESHOLD = 40
 
         # ================================
         # STEP 1: OCR + SCORE
@@ -472,7 +472,7 @@ def run_standalone_toc(pdf_filename, page_list=None):
     # Run TOC processor
     toc = TOCProcessor()
     # patch_toc_processor(toc)
-    results , debug_images  = toc.toc_run_module(images, debug=ProjectConfig.DEBUG_MODE, model=ProjectConfig.TOC_EXTRACTION_MODEL)
+    results , debug_images , selected_pages  = toc.toc_run_module(images, debug=ProjectConfig.DEBUG_MODE, model=ProjectConfig.TOC_EXTRACTION_MODEL)
 
     # Final Export
     with open(json_out, "w", encoding="utf-8") as f:
@@ -503,7 +503,7 @@ def run_standalone_toc(pdf_filename, page_list=None):
 
 if __name__ == "__main__":
     # SETTINGS:
-    FILENAME = "tocmh"       # The .pdf name in your input folder
+    FILENAME = "Class8 - Maths-reduced_toc"       # The .pdf name in your input folder
     PAGES = None         # Set to None if your PDF is already cropped to TOC only
 
     run_standalone_toc(FILENAME, page_list=PAGES)
