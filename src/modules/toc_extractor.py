@@ -43,6 +43,9 @@ class TOCProcessor:
 
         # self.ocr_engine = ocr_engine
 
+        # OCR result cache: page_idx → {"lines": [...], "elements": [...]}
+        self._ocr_cache: dict[int, dict] = {}
+
         # Configuration & Thresholds
         self.y_threshold = 25
         self.float_check = re.compile(r"^\d+\.\d+")
@@ -51,7 +54,6 @@ class TOCProcessor:
         self.min_line_length = 6
         self.max_chapter_jump = 5
         self.transform_logic = robust_transform_logic.__get__(self, TOCProcessor)
-
     def _spatial_grouping(self, raw_elements):
         """Groups raw OCR boxes into logical horizontal lines based on Y-coordinates."""
         if not raw_elements:
@@ -182,180 +184,140 @@ class TOCProcessor:
       return round((toc_like / total) * 100, 2) if total > 0 else 0.0
 
 
-    def toc_run_module(self, toc_images, debug=True, model=ProjectConfig.TOC_EXTRACTION_MODEL):
+    def _ocr_page(
+        self,
+        img,
+        page_idx: int,
+        model: str = ProjectConfig.TOC_EXTRACTION_MODEL,
+    ) -> dict:
+        """OCR a single page image. Returns cached result on repeat calls."""
+        if page_idx in self._ocr_cache:
+            return self._ocr_cache[page_idx]
+
+        try:
+            image = img.convert("RGB") if isinstance(img, Image.Image) else Image.open(img).convert("RGB")
+        except Exception as e:
+            print(f"❌ Failed to load image for page {page_idx + 1}: {e}")
+            self._ocr_cache[page_idx] = {"lines": [], "elements": []}
+            return self._ocr_cache[page_idx]
+
+        elements = []
+        try:
+            if model == "surya":
+                line_predictions = self.recognition_predictor(
+                    [image], det_predictor=self.detection_predictor
+                )[0]
+                elements = line_predictions.text_lines
+
+            elif model == "easy":
+                results = self.easyocr_reader.readtext(np.array(image))
+                for res in results:
+                    coords, text = res[0], res[1]
+                    xs = [p[0] for p in coords]
+                    ys = [p[1] for p in coords]
+
+                    class MockLine:
+                        pass
+                    m = MockLine()
+                    m.bbox = [min(xs), min(ys), max(xs), max(ys)]
+                    m.text = text
+                    elements.append(m)
+
+        except Exception as e:
+            print(f"❌ OCR failed on page {page_idx + 1}: {e}")
+
+        grouped = []
+        try:
+            grouped = self._spatial_grouping(elements)
+        except Exception as e:
+            print(f"❌ Grouping failed on page {page_idx + 1}: {e}")
+
+        result = {"lines": grouped, "elements": elements}
+        self._ocr_cache[page_idx] = result
+        return result
+
+    def clear_cache(self):
+        """Call between documents to free memory."""
+        self._ocr_cache.clear()
+
+    def toc_run_module(
+        self,
+        toc_images,
+        debug: bool = True,
+        model: str = ProjectConfig.TOC_EXTRACTION_MODEL,
+        page_offset: int = 0,          # ← add this
+    ):
         print(f"\n📖 [TOC_PROCESS] Extracting structure using {model.upper()}...")
-
-        raw_output = []
-        debug_frames = []
-        page_scores = {}
-
-        # ================================
-        # CONFIG
-        # ================================
-        selected_pages = []
-        start_found = False
-        base_score = None
 
         DROP_THRESHOLD = 10
         START_THRESHOLD = 80
 
-        # ================================
-        # STEP 1: OCR + SCORE
-        # ================================
+        selected_pages = []
+        raw_output = []
+        start_found = False
+        base_score = None
+        droped_value=False
+
         for idx, img in enumerate(toc_images):
+            real_idx = page_offset + idx          # ← absolute page index
+            page_number = real_idx + 1            # ← absolute page number
+            print(f"   📄 Processing page {page_number}/{page_offset + len(toc_images)}...")
 
-            page_number = idx + 1  # ✅ FIXED
-
-            print(f"   📄 Processing Page {page_number}/{len(toc_images)}...")
-
-            # ----------------------------
-            # LOAD IMAGE
-            # ----------------------------
-            try:
-                if isinstance(img, Image.Image):
-                    image = img.convert("RGB")
-                else:
-                    image = Image.open(img).convert("RGB")
-            except Exception as e:
-                print(f"❌ Failed to load image {page_number}: {e}")
-                continue
-
-            elements_to_group = []
-
-            # ----------------------------
-            # OCR
-            # ----------------------------
-            try:
-                if model == "surya":
-                    line_predictions = self.recognition_predictor(
-                        [image],
-                        det_predictor=self.detection_predictor
-                    )[0]
-                    elements_to_group = line_predictions.text_lines
-
-                elif model == "easy":
-                    results = self.easyocr_reader.readtext(np.array(image))
-
-                    for res in results:
-                        coords, text = res[0], res[1]
-
-                        x_coords = [p[0] for p in coords]
-                        y_coords = [p[1] for p in coords]
-
-                        class MockLine:
-                            pass
-
-                        m = MockLine()
-                        m.bbox = [
-                            min(x_coords), min(y_coords),
-                            max(x_coords), max(y_coords)
-                        ]
-                        m.text = text
-
-                        elements_to_group.append(m)
-
-            except Exception as e:
-                print(f"❌ OCR failed on page {page_number}: {e}")
-                continue
-
-            # ----------------------------
-            # GROUPING
-            # ----------------------------
-            try:
-                grouped_lines = self._spatial_grouping(elements_to_group)
-            except Exception as e:
-                print(f"❌ Grouping failed on page {page_number}: {e}")
-                grouped_lines = []
-
-            # STORE RAW
-            page_data = {
-                "lines": grouped_lines,
-                "elements": elements_to_group
-            }
+            page_data = self._ocr_page(img, real_idx, model)   # ← use real_idx for cache key
             raw_output.append(page_data)
 
-            # ----------------------------
-            # SCORING
-            # ----------------------------
-            score = self._score_single_page(grouped_lines)
-            page_scores[page_number] = score
-
+            score = self._score_single_page(page_data["lines"])
             print(f"📄 Page {page_number} → TOC Score: {score:.2f}%\n")
 
-            # ----------------------------
-            # TOC DETECTION LOGIC
-            # ----------------------------
             if not start_found:
                 if score >= START_THRESHOLD:
                     start_found = True
                     base_score = score
-
                     selected_pages.append(page_number)
-
-                    print(f"✅ TOC START at Page {page_number} → Score: {score}% (base set)")
+                    print(f"✅ TOC START at page {page_number} → score: {score}%")
                 else:
-                    print(f"⏭️  Page {page_number} → Score: {score}% (below {START_THRESHOLD}%, skipping)")
-
+                    print(f"⏭️  Page {page_number} → score: {score}% (below {START_THRESHOLD}%, skipping)")
             else:
                 drop = base_score - score
-
                 if drop > DROP_THRESHOLD:
+                    droped_value= True
                     print(
-                        f"🛑 SUDDEN DROP at Page {page_number} → Score: {score}% "
-                        f"(dropped {drop:.1f}pts from base {base_score}%) — STOPPING"
+                        f"🛑 DROP at page {page_number} → score: {score}% "
+                        f"(dropped {drop:.1f}pts from {base_score}%) — stopping"
                     )
                     break
-                else:
-                    selected_pages.append(page_number)
-                    print(f"✅ Page {page_number} → Score: {score}% (within range, included)")
+                selected_pages.append(page_number)
+                print(f"✅ Page {page_number} → score: {score}% (included)")
 
-        # ================================
-        # STEP 2: VALIDATION
-        # ================================
         if not raw_output:
             print("❌ No OCR output generated.")
-            return [], [], []
+            return [], [], [],droped_value
 
         if not selected_pages:
             print("⚠️ No TOC pages passed the threshold.")
-            return [], [], []
+            return [], [], [], droped_value
 
         print(f"\n🔥 Selected TOC pages: {selected_pages}")
 
-        # ================================
-        # STEP 3: FILTER OUTPUT
-        # ================================
-        filtered_raw_output = []
+        filtered = [raw_output[p - 1 - page_offset] for p in selected_pages if 0 <= p - 1 - page_offset < len(raw_output)]
 
-        for p in selected_pages:
-            idx = p - 1
-            if 0 <= idx < len(raw_output):
-                filtered_raw_output.append(raw_output[idx])
-
-        if not filtered_raw_output:
+        if not filtered:
             print("❌ No valid TOC pages after filtering.")
-            return [], [], selected_pages
+            return [], [], selected_pages,droped_value
 
-        # ================================
-        # STEP 4: TRANSFORM
-        # ================================
         try:
-            structured_results = self.transform_logic(filtered_raw_output)
+            structured_results = self.transform_logic(filtered)
         except Exception as e:
             print(f"❌ transform_logic failed: {e}")
-            return [], [], selected_pages
+            return [], [], selected_pages,droped_value
 
         if not structured_results:
             print("⚠️ transform_logic returned empty result.")
-            return [], [], selected_pages
+            return [], [], selected_pages,droped_value
 
-        # ================================
-        # FINAL OUTPUT
-        # ================================
-        return structured_results, debug_frames, selected_pages
+        return structured_results, [], selected_pages,droped_value
 
 
-    
     # def transform_logic(self, raw_pages):
     #     print(f":brain: [TOC_TRANSFORM] Converting lines to structured JSON...")
     #     structured_data = []

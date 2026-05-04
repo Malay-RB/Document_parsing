@@ -56,7 +56,7 @@ def clean_asset_name(text):
 
 def check_Toc_percentage(images, toc):
 
-    _, _, selected_pages = toc.toc_run_module(
+    probe_results, debug_frames, selected_pages,droped_value = toc.toc_run_module(
         images,
         debug=True,
         model="surya"
@@ -64,9 +64,9 @@ def check_Toc_percentage(images, toc):
 
     if selected_pages:
         logger.info(f"🎯 TOC DETECTED on Pages: {selected_pages}")
-        return True, selected_pages
+        return True, probe_results, debug_frames,selected_pages,droped_value
 
-    return False, []
+    return False, [], [], [], False
 
 def run_sync_phase(image, boxes, ocr_engine, model, target_anchor, height, width):
     """

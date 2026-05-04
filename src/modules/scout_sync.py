@@ -3,6 +3,9 @@ import sys
 import gc
 import json
 
+from PIL import Image, ImageDraw, ImageEnhance, ImageFilter
+from ironpdf import PdfDocument
+
 # Ensure project root is in path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
@@ -20,11 +23,6 @@ from config import ProjectConfig
 from processing.logger import setup_logger
 from processing.optimize_layout import draw_layout
 from processing.toc_patterns import patch_toc_processor
-
-from ironpdf import PdfDocument
-from PIL import ImageOps, ImageFilter, ImageDraw, Image
-import shutil
-import re
 
 @track_performance
 def run_scout_sync(pdf_name, input_path=None, output_path=None, models=None, config=None, force_prod=False):
@@ -61,63 +59,6 @@ def run_scout_sync(pdf_name, input_path=None, output_path=None, models=None, con
     pdf_loader.open(pdf_path)
     total_pages = pdf_loader.get_total_pages()
 
-    OUTPUT_FOLDER = "output_images_2"
-
-    for folder in [OUTPUT_FOLDER]:
-        if os.path.exists(folder):
-            shutil.rmtree(folder)
-        os.makedirs(folder)
-
-    pdf = PdfDocument.FromFile(pdf_path)
-
-    pdf.RasterizeToImageFiles(
-        os.path.join(OUTPUT_FOLDER, "page_*.jpg"),
-        DPI=150
-    )
-
-    def extract_number(filename):
-      return int(re.search(r'page_(\d+)', filename).group(1))
-
-    images = []
-
-    files = [f for f in os.listdir(OUTPUT_FOLDER) if f.startswith("page_") and f.endswith(".jpg")]
-
-    for filename in sorted(files, key=extract_number):
-        path = os.path.join(OUTPUT_FOLDER, filename)
-        img = Image.open(path)
-        images.append(img)
-
-    # Load images from rasterized output
-    # images = []
-    # for filename in sorted(os.listdir(OUTPUT_FOLDER)):
-    #     if filename.startswith("page_") and filename.endswith(".jpg"):
-    #         path = os.path.join(OUTPUT_FOLDER, filename)
-    #         img = Image.open(path)
-    #         images.append(img)
-
-    # import tempfile
-    # import os
-    # from PIL import Image
-
-    # images = []
-
-    # with tempfile.TemporaryDirectory() as temp_dir:
-
-    #     # Step 1: Rasterize to temp folder
-    #     pdf.RasterizeToImageFiles(
-    #         os.path.join(temp_dir, "page_*.jpg"),
-    #         DPI=150
-    #     )
-
-    #     # Step 2: Load into memory
-    #     for filename in sorted(os.listdir(temp_dir)):
-    #         if filename.endswith(".jpg"):
-    #             path = os.path.join(temp_dir, filename)
-    #             img = Image.open(path).convert("RGB")
-    #             images.append(img)
-
-    # # ✅ temp_dir auto-deleted here
-
     # Reuse models if passed (Injection), else load new ones (Singleton handled in loader)
     if models is None:
         logger.info("⚙️  Loading Scout Models...")
@@ -134,7 +75,7 @@ def run_scout_sync(pdf_name, input_path=None, output_path=None, models=None, con
     
     # Pass both engines and injected models
     toc = TOCProcessor(ocr_engine=ocr_engine, models=models)
-    # patch_toc_processor(toc)
+    patch_toc_processor(toc)
 
     state = {
         "hierarchy_data": [],
@@ -145,72 +86,97 @@ def run_scout_sync(pdf_name, input_path=None, output_path=None, models=None, con
         "scout_images": [],      
         "debug_images": []       
     }
+    content_start = None
+    pdf_readed = PdfDocument.FromFile(pdf_path)
+
+    def pdf_page_to_rgb_clean(pdf_path, page_no,pdf_readed):
+        dpi=150
+        fresh_pdf = pdf_readed
+        print("pageno pass in the pdf_page_to_rgb_clean funtion",page_no)
+        
+        # try:
+        single_page_pdf = fresh_pdf.CopyPage(page_no)
+        bmp_array = single_page_pdf.ToBitmap(0, DPI=dpi)
+        bmp = bmp_array[0]  # always index 0 since it's a single-page doc
+
+        img = Image.frombytes(
+            "RGBA",
+            (bmp.Width, bmp.Height),
+            bytes(bmp.GetBytes()),
+            "raw",
+            "BGRA"
+        )
+
+        img = img.transpose(Image.FLIP_TOP_BOTTOM)
+        img = img.convert("RGB")
+
+        # bmp.Dispose()
+        # del bmp
+        # del bmp_array
+
+        # finally:
+        #     fresh_pdf.Dispose()
+        #     del fresh_pdf
+        #     gc.collect()
+
+        # ✅ Image enhancement
+        img = ImageEnhance.Contrast(img).enhance(1.4)
+        img = ImageEnhance.Brightness(img).enhance(1.05)
+        img = img.filter(ImageFilter.UnsharpMask(radius=1.5, percent=180, threshold=3))
+
+        # ✅ SAVE IMAGE
+        # if save:
+        #     folder = "image_testing_1"
+        #     os.makedirs(folder, exist_ok=True)  # create if not exists
+
+        #     filename = f"page_{page_no + 1}.jpg"  # human-readable page number
+        #     save_path = os.path.join(folder, filename)
+
+        #     img.save(save_path, "JPEG", quality=95)
+        #     print(f"✅ Saved: {save_path}")
+
+        return img
 
     try:
         # Loop with scout_limit safety
-        # for page_no in range(1, min(total_pages, scout_limit + 5) + 1):
-        #     logger.debug(f"📄 Scanning Page {page_no}...")
+        # Initialize once before loop
+        if "scout_history" not in state:
+            state["scout_history"] = []
+
+        for page_no in range(1, total_pages + 1):
+            logger.debug(f"📄 Scanning Page {page_no}...")
+            image = None
+
+            # state["scout_history"] = []
+
+
+            # ✅ Correct indexing
+            image = pdf_page_to_rgb_clean(pdf_path, page_no - 1,pdf_readed)
+            # image = pdf_loader.load_page(page_no)
+            width, height = image.size
+
             
-        #     image = pdf_loader.load_page(page_no)
-        #     width, height = image.size
+
+            # Detect Layout
+            # raw_boxes = layout_engine.detect(image)
+            # boxes = get_unified_sorting(filter_overlapping_boxes(raw_boxes))
+
+            # --- PHASE 1: SCOUT (Keyword Detection) ---
             
-        #     # Detect Layout
-        #     raw_boxes = layout_engine.detect(image)
-        #     boxes = get_unified_sorting(filter_overlapping_boxes(raw_boxes))
 
-        #     # --- PHASE 1: SCOUT (Keyword Detection) ---
-        #     if not state["is_discovering_toc"]:
-        #         found_toc, trigger_text = run_scout_phase(image, boxes, ocr_engine, extraction_model, page_no, width, height)
-                
-        #         if found_toc:
-        #             logger.info(f"🎯 SCOUT TRIGGERED! '{trigger_text}' on Page {page_no}")
-        #             state["is_discovering_toc"] = True
-                    
-        #             state["scout_images"].append(draw_layout(image, boxes))
-                    
-        #             # PROBE: Identify Anchor text (e.g., Chapter 1 title)
-        #             probe_results, debug_frames = toc.toc_run_module([image], debug=debug_mode, model=ProjectConfig.TOC_EXTRACTION_MODEL)
-        #             if debug_frames: 
-        #                 state["debug_images"].extend(debug_frames)
+                # ✅ CRITICAL FIX: accumulate pages
+            state["scout_history"].append(image)
 
-        #             if probe_results:
-        #                 state["hierarchy_data"] = probe_results
-        #                 # state["target_anchor"] = probe_results[0]["chapter_name"].lower()
-        #                 chapter_name = probe_results[0].get("chapter_name")
-        #                 if chapter_name:
-        #                     state["target_anchor"] = chapter_name.lower()
-        #                     logger.info(f"⚓ ANCHOR CAPTURED: '{state['target_anchor']}'")
-        #                 else:
-        #                     logger.warning(f"⚠️ TOC found but chapter_name is None on Page {page_no}. Skipping anchor.")
-        #                     state["is_discovering_toc"] = False
-        #                     continue
-        #                 # logger.info(f"⚓ ANCHOR CAPTURED: '{state['target_anchor']}'")
-        #             else:
-        #                 logger.warning(f"⚠️ Trigger found but TOC Probe failed on Page {page_no}.")
-        #                 state["is_discovering_toc"] = False
-                    
-        #             state["toc_buffer"].append(page_no)
-        #             continue
-                
-        #         if page_no >= scout_limit:
-        #             logger.error(f"❌ FAILURE: Scout limit ({scout_limit}) reached.")
-        #             break
+            found_toc, probe_results, debug_frames, selected_pages,droped_value = check_Toc_percentage(
+                state["scout_history"], toc
+            )
 
-        #     # --- PHASE 2: SYNC (Anchor Tracking) ---
-        #     else:
-        #         if run_sync_phase(image, boxes, ocr_engine, extraction_model, state["target_anchor"], height, width):
-        #             logger.info(f"✅ SYNC SUCCESSFUL! Match found on Page: {page_no}")
-                    
-        #             state["scout_images"].append(draw_layout(image, boxes))
-        #             state["sync_completed"] = True
-        #             break 
-        #         else:
-        #             state["toc_buffer"].append(page_no)
-        #             logger.debug(f"⏳ Page {page_no}: Anchor not yet found.")
+            if droped_value:
+                content_start = page_no
+                break
 
-        # --- 3. FINAL SUMMARY & AUTO-FALLBACK ---
-    
-        # # Determine starting point: Use trigger page or page 1
+                # --- 3. FINAL SUMMARY & AUTO-FALLBACK ---
+        # Determine starting point: Use trigger page or page 1
         # scan_start = state["toc_buffer"][0] if state["toc_buffer"] else 1
         
         # # Initialize default values to prevent UnboundLocalError
@@ -235,144 +201,23 @@ def run_scout_sync(pdf_name, input_path=None, output_path=None, models=None, con
         #     # Explicitly set extraction to start from the 6th page
         #     content_start = scan_start + 5 
 
-        found_toc, selected_pages = check_Toc_percentage(images, toc)
-
-        if not found_toc:
-            logger.error("❌ No TOC detected in document.")
-            return None
-
-        selected_images = [images[p - 1] for p in selected_pages]
-
-        probe_results, debug_frames,_ = toc.toc_run_module(
-            selected_images,
-            debug=True,
-            model="surya"
-        )
-
-        print("probe_results",probe_results)
-
-        chapter_1_name = None
-        for chapter in probe_results:
-            if chapter['chapter_id'] == 1:
-                chapter_1_name = chapter['chapter_name']
-                break
-
-        print(chapter_1_name)
-
-
-        state["target_anchor"]=chapter_1_name
-
-
-
-
-        content_start = selected_pages[-1] + 1
-
-        # content starts AFTER last TOC page
-        start_index = content_start - 1  # convert to 0-based index
-
-        # safety check
-        if start_index < 0 or start_index >= len(images):
-            raise ValueError("content_start is out of range")
-
-        sync_candidates = []
-        search_limit = 10
-        search_start_page = start_index + 1 
-
-        logger.info(f"🚀 INITIALIZING GLOBAL SYNC | Range: P.{search_start_page} to P.{search_start_page + search_limit}")
-        logger.info(f"🎯 Target Anchor: '{state['target_anchor']}'")
-
-        for index, image in enumerate(images[start_index:], start=start_index):
-            page_no = index + 1
-            
-            if page_no > (search_start_page + search_limit):
-                logger.info(f"⏹️ Search limit reached ({search_limit} pages). Evaluating candidates...")
-                break
-
-            logger.info(f"📑 Scanning Page {page_no}...")
-            
-            try:
-                image = pdf_loader.load_page(page_no)
-                width, height = image.size
-                
-                raw_boxes = layout_engine.detect(image)
-                boxes = get_unified_sorting(filter_overlapping_boxes(raw_boxes))
-
-                score, text = run_sync_phase(
-                    image, boxes, ocr_engine, extraction_model, 
-                    state["target_anchor"], height, width
-                )
-
-                sync_candidates.append({
-                    "page_no": page_no,
-                    "score": score,
-                    "text": text,
-                    "image": image,
-                    "boxes": boxes
-                })
-                
-                if score > -1.0:
-                    logger.info(f"   📊 Best match on P.{page_no}: {score:.4f} ('{text[:30]}...')")
-                else:
-                    logger.info(f"   🚫 No SectionHeaders found on P.{page_no}")
-
-            except Exception as e:
-                logger.error(f"   ❌ Error on P.{page_no}: {str(e)}")
-                continue
-
-        # --- FINAL DECISION LOGIC ---
-
-        # Sort candidates by score (highest first)
-        sync_candidates.sort(key=lambda x: x["score"], reverse=True)
-
-        if sync_candidates and sync_candidates[0]["score"] > -1.0:
-            winner = sync_candidates[0]
-            content_start = winner["page_no"]
-            
-            logger.info("-" * 50)
-            logger.info(f"🏆 SYNC DECISION: SUCCESS")
-            logger.info(f"   Winner Page   : {winner['page_no']}")
-            logger.info(f"   Winner Score  : {winner['score']:.4f}")
-            logger.info(f"   Winner Text   : '{winner['text']}'")
-            logger.info("-" * 50)
-        else:
-            content_start = search_start_page
-            logger.warning("-" * 50)
-            logger.warning(f"⚠️ SYNC DECISION: FALLBACK TRIGGERED")
-            logger.warning(f"   Reason        : No valid SectionHeaders detected in search range.")
-            logger.warning(f"   Action        : Defaulting to first page after TOC (P.{content_start})")
-            logger.warning("-" * 50)
-
-        # Critical state updates
-        state["sync_completed"] = True
-        content_start_page = content_start  # Final variable for extraction phase
-
-
-
-        final_toc_pages = selected_pages
-        full_hierarchy = probe_results
-
-        if final_toc_pages:
-            try:
-                full_hierarchy = probe_results
-            except Exception as e:
-                logger.error(f"❌ Full TOC extraction failed: {e}. Using probe data fallback.")
 
         # Build the final report
         tracking_report = {
-            "content_start_page": content_start_page, 
-            "hierarchy": full_hierarchy 
+            "content_start_page": content_start,
+            "hierarchy": probe_results
         }
 
         # Save and return if we have a valid path forward
-        if content_start:
-            report_path = os.path.join(report_dir, f"{pdf_name}_sync_report.json")
-            with open(report_path, "w") as f:
-                json.dump(tracking_report, f, indent=4)
+        # if content_start:
+        #     report_path = os.path.join(report_dir, f"{pdf_name}_sync_report.json")
+        #     with open(report_path, "w") as f:
+        #         json.dump(tracking_report, f, indent=4)
             
-            if not state["sync_completed"]:
-                logger.info(f"🚀 Fallback complete. Deep Extraction will start at Page {content_start}")
+        #     if not state["sync_completed"]:
+        #         logger.info(f"🚀 Fallback complete. Deep Extraction will start at Page {content_start}")
             
-            return tracking_report
+        return tracking_report
 
         # Total failure (No TOC found at all)
         all_visuals = state["scout_images"] + state["debug_images"]
