@@ -236,8 +236,6 @@ class TOCProcessor:
         start_found = False
         base_score = None
 
-        DROP_THRESHOLD = 10
-        START_THRESHOLD = 65
 
         for idx, img in enumerate(toc_images):
             real_idx = page_offset + idx          # ← absolute page index
