@@ -578,6 +578,10 @@ def _is_subject_header(text: str, config: TOCConfig = DEFAULT_CONFIG) -> bool:
     table-style TOC, e.g. "HISTORY", "CIVICS", "SOCIAL SCIENCE".
     """
     text = text.strip()
+
+    if text.strip().lower() in {"content", "contents", "table of contents"}:
+        return False
+
     if text in config.hindi_known_subjects:
         return True
     if not config.subject_header_re.match(text):
