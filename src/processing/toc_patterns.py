@@ -1,6 +1,14 @@
 import re
 from typing import Optional
 from dataclasses import dataclass, field
+# ── Coord classifier import ───────────────────────────────────────────────────
+try:
+    from processing.coord_classifier import build_level_fn
+    _COORD_AVAILABLE = True
+except ImportError:
+    _COORD_AVAILABLE = False
+    def build_level_fn(lines):
+        return lambda x: None, 0
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -264,6 +272,16 @@ def _strip_html(text: str) -> str:
     """Remove HTML/XML tags like <b>, </b>, <i>, <math>…</math> etc."""
     return re.sub(r'<[^>]+>', '', text).strip()
 
+def _is_bare_token(text: str) -> bool:
+    stripped = text.strip()
+    if re.fullmatch(r'\d{1,3}\.', stripped):
+        return True
+    if re.fullmatch(r'\d{1,4}\s*(?:-|–|—|to)\s*\d{1,4}', stripped, re.IGNORECASE):
+        return True
+    if re.fullmatch(r'\d{1,4}', stripped):
+        return True
+    return False
+
 
 def _strip_ocr_artifacts(text: str, config: TOCConfig = DEFAULT_CONFIG) -> str:
     """Remove known OCR math-rendering artifacts (frac12, lone 11, LaTeX cmds)."""
@@ -313,6 +331,11 @@ def _has_chapter_after_unit(text: str) -> bool:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # ── Line pre-processing ───────────────────────────────────────────────────────
+def _get_text(line) -> str:
+    return line["text"] if isinstance(line, dict) else line
+
+def _get_x(line):
+    return line.get("x") if isinstance(line, dict) else None
 
 def _merge_floating_page_numbers(lines: list, config: TOCConfig = DEFAULT_CONFIG) -> list:
     """
@@ -323,27 +346,34 @@ def _merge_floating_page_numbers(lines: list, config: TOCConfig = DEFAULT_CONFIG
     pre = []
     i = 0
     while i < len(lines):
-        stripped = lines[i].strip()
+        stripped      = _get_text(lines[i]).strip()
         if re.fullmatch(r'\d{1,3}\.', stripped) and i + 1 < len(lines):
-            next_stripped = lines[i + 1].strip()
-            if not re.match(r'^\d+\.?\s', next_stripped):
+            next_stripped = _get_text(lines[i + 1]).strip()
+            already_complete = bool(re.match(r'^\d+\.?\s', next_stripped))
+            next_is_bare     = _is_bare_token(next_stripped)
+            if not already_complete and not next_is_bare:
                 merged_fwd = stripped + " " + next_stripped
-                pre.append(merged_fwd)
+                pre.append({"text": merged_fwd, "x": _get_x(lines[i])})
                 print(f"      🔗 Merged orphan ID forward: [{stripped}] + [{next_stripped}]")
                 i += 2
                 continue
+            else:
+                print(f"      ⚠️  Skipped bad forward merge: [{stripped}] + [{next_stripped}]")
         pre.append(lines[i])
         i += 1
 
     # Pass 2: merge orphan bare numbers/ranges backward onto previous line
     merged = []
     for line in pre:
-        stripped = line.strip()
+        stripped = _get_text(line).strip()
         is_num = re.fullmatch(
             r'\d{1,4}(\s*(?:-|–|—|to)\s*\d{1,4})?', stripped, re.IGNORECASE
         )
-        if is_num and merged and merged[-1].strip():
-            merged[-1] = merged[-1].strip() + " " + stripped
+        if is_num and merged and _get_text(merged[-1]).strip():
+            if isinstance(merged[-1], dict):
+                merged[-1]["text"] = merged[-1]["text"].strip() + " " + stripped
+            else:
+                merged[-1] = merged[-1].strip() + " " + stripped
         else:
             merged.append(line)
     return merged
@@ -376,25 +406,25 @@ def _merge_two_line_chapters(lines: list, config: TOCConfig = DEFAULT_CONFIG) ->
     merged = []
     i = 0
     while i < len(lines):
-        current_raw   = lines[i].strip()
+        current_raw   = _get_text(lines[i]).strip()
         current_clean = _strip_html(current_raw)
 
         if config.standalone_ch.match(current_clean) and i + 1 < len(lines):
-            next_raw   = lines[i + 1].strip()
+            next_raw   = _get_text(lines[i + 1]).strip()
             next_clean = _strip_html(next_raw)
             if not config.standalone_ch.match(next_clean):
                 if (i + 2 < len(lines) and
                     re.fullmatch(r'\d{1,4}(\s*(?:-|–|—|to)\s*\d{1,4})?',
-                                 _strip_html(lines[i + 2].strip()), re.IGNORECASE)):
-                    page_line   = _strip_html(lines[i + 2].strip())
+                                 _strip_html(_get_text(lines[i + 2]).strip()), re.IGNORECASE)):
+                    page_line   = _strip_html(_get_text(lines[i + 2]).strip())
                     merged_line = current_clean + " " + next_clean + " " + page_line
-                    merged.append(merged_line)
+                    merged.append({"text": merged_line, "x": _get_x(lines[i])})
                     print(f"      🔗 Merged three-line chapter: [{current_clean}] + "
                           f"[{next_clean}] + [{page_line}]")
                     i += 3
                     continue
                 merged_line = current_clean + " " + next_clean
-                merged.append(merged_line)
+                merged.append({"text": merged_line, "x": _get_x(lines[i])})
                 print(f"      🔗 Merged two-line chapter: [{current_clean}] + [{next_clean}]")
                 i += 2
                 continue
@@ -402,14 +432,17 @@ def _merge_two_line_chapters(lines: list, config: TOCConfig = DEFAULT_CONFIG) ->
         if merged and _is_continuation_line(current_clean, config):
             prev_sp, prev_ep, _ = _extract_page_range(merged[-1], config)
             if prev_sp is None:
-                merged[-1] = merged[-1].strip() + " " + current_clean
+                if isinstance(merged[-1], dict):
+                    merged[-1]["text"] = merged[-1]["text"].strip() + " " + current_clean
+                else:
+                    merged[-1] = merged[-1].strip() + " " + current_clean
                 print(f"      🔗 Appended continuation: [{current_clean}] → merged into previous")
             else:
                 print(f"      ⏭  Skipped orphan continuation: [{current_clean}]")
             i += 1
             continue
 
-        merged.append(current_raw)
+        merged.append(lines[i])   
         i += 1
     return merged
 
@@ -423,7 +456,7 @@ def _detect_id_style(lines: list, config: TOCConfig = DEFAULT_CONFIG) -> str:
     """
     votes = {"Indian": 0, "roman": 0, "word": 0, "dash_chapter": 0}
     for line in lines:
-        line = _strip_html(line.strip())
+        line = _strip_html(_get_text(line).strip())
         if re.fullmatch(r'\d{1,4}(\s*[-–—]\s*\d{1,4})?', line):
             continue
         if config.dash_chapter_id.match(line) or config.dash_unit_id.match(line):
@@ -642,7 +675,7 @@ def _parse_table_toc(all_lines: list, config: TOCConfig = DEFAULT_CONFIG) -> lis
     global_ch_counter = 0
 
     for raw_line in all_lines:
-        cleaned = raw_line.strip()
+        cleaned = _get_text(raw_line).strip()
         cleaned = re.sub(r'<[^>]+>', '', cleaned)
         cleaned = re.sub(r'\.{2,}', ' ', cleaned)
         cleaned = re.sub(r'\s{2,}', ' ', cleaned).strip()
@@ -743,7 +776,22 @@ def robust_transform_logic(
         lines  = page.get("lines", [])
         merged = _merge_floating_page_numbers(lines, config)
         merged = _merge_two_line_chapters(merged, config)
+        # Preserve dict format — extract plain strings only when needed downstream
         all_lines.extend(merged)
+
+    # ── CHANGE 3/4: coord level function ─────────────────────────────────────
+    try:
+        level_fn, num_levels = build_level_fn(all_lines)
+        if num_levels > 1:
+            print(f"      📍 Coord clustering: {num_levels} indent levels detected")
+        else:
+            print(f"      📍 Coord clustering: flat layout, coord assist disabled")
+            level_fn = lambda x: None
+    except Exception as e:
+        print(f"      ⚠️  Coord clustering skipped ({e})")
+        level_fn  = lambda x: None
+        num_levels = 0
+    # ─────────────────────────────────────────────────────────────────────────
 
     # ── 2. Detect dominant ID style ──────────────────────────────────────────
     id_style = _detect_id_style(all_lines, config)
@@ -752,9 +800,9 @@ def robust_transform_logic(
     # ── 3. Detect table-style TOC ─────────────────────────────────────────────
     table_hits = sum(
         1 for l in all_lines
-        if (config.table_row_full.match(l.strip())
-            or config.table_row_chapter_only.match(l.strip())
-            or config.loose_table_row.match(l.strip()))
+        if (config.table_row_full.match(_get_text(l).strip())
+            or config.table_row_chapter_only.match(_get_text(l).strip())
+            or config.loose_table_row.match(_get_text(l).strip()))
     )
     print(f"      📊 table_hits = {table_hits}")
     if table_hits >= 3:
@@ -770,9 +818,9 @@ def robust_transform_logic(
     subtopic_counters = {}
 
     for line in all_lines:
-        if self.is_header_or_footer(line):
+        if self.is_header_or_footer(_get_text(line)):
             continue
-        cleaned = self.clean_text(line)
+        cleaned = self.clean_text(_get_text(line))
         if not cleaned or len(cleaned) < self.min_line_length:
             continue
 
@@ -812,6 +860,20 @@ def robust_transform_logic(
         # Attempt to parse as a structured entry
         entry = _parse_line(cleaned, id_style, last_chapter_int,
                             self.max_chapter_jump, config)
+        
+        # ── CHANGE 4/4: coord fallback ────────────────────────────────────────
+        if entry is None and num_levels > 1:
+            x_val = line.get("x") if isinstance(line, dict) else None
+            if level_fn(x_val) == "unit":
+                sp, _, _ = _extract_page_range(cleaned, config)
+                if sp is None:
+                    active_unit_name = _safe_sanitize(cleaned)
+                    active_unit_id   = (
+                        active_unit_id if isinstance(active_unit_id, int) else 0
+                    ) + 1
+                    print(f"      📦 [COORD] Unit detected: {active_unit_name}")
+                continue
+        # ─────────────────────────────────────────────────────────────────────
 
         # Fallback: horizontal subtopics (comma-separated on one line)
         if entry is None and last_chapter_int > 0 and ',' in cleaned:
