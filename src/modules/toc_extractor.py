@@ -78,17 +78,40 @@ class TOCProcessor:
             # Sort each row left-to-right (X-coordinate)
             sorted_row = sorted(row, key=lambda l: l.bbox[0])
             combined_text = " ".join([l.text for l in sorted_row])
-            final_lines.append(combined_text)
+            xs = [l.bbox[0] for l in sorted_row]
+            min_x = float(np.median(xs))
+            avg_y = sum([l.bbox[1] for l in sorted_row]) / len(sorted_row)
+
+            final_lines.append({
+                "text": combined_text,
+                "x": min_x,
+                "y": avg_y
+            })
 
         return final_lines
 
     def is_header_or_footer(self, text):
+        # 🔥 MAKE IT TYPE SAFE
+        if isinstance(text, dict):
+            text = text.get("text", "")
+
+        if not isinstance(text, str):
+            text = str(text)
+
         patterns = [r"\.indd", r"\d{1,2}/\d{1,2}/\d{4}", r"Preliminary|Reprint|MONTH|CHAPTER TITLE"]
         return any(re.search(p, text, re.IGNORECASE) for p in patterns)
 
     def clean_text(self, text):
+        # 🔥 HANDLE DICT INPUT
+        if isinstance(text, dict):
+            text = text.get("text", "")
+
+        # 🔥 ENSURE STRING
+        if not isinstance(text, str):
+            text = str(text)
+
         text = re.sub(r'<[^>]*>', '', text)
-        text = re.sub(r'\.{2,}', ' ', text) # Remove leader dots (......)
+        text = re.sub(r'\.{2,}', ' ', text)
         return text.strip()
 
     def sanitize_title(self, text):
@@ -105,7 +128,7 @@ class TOCProcessor:
             # Clean safely
             cleaned_lines = []
             for l in lines:
-                cl = self.clean_text(l)
+                cl = self.clean_text(l["text"] if isinstance(l, dict) else l)
                 if cl:
                     cleaned_lines.append(cl)
 
@@ -156,7 +179,8 @@ class TOCProcessor:
       """Score a single page's lines for TOC likelihood. Returns score 0-100."""
       cleaned_lines = []
       for l in lines:
-          cl = self.clean_text(l)
+          text = l["text"] if isinstance(l, dict) else l
+          cl = self.clean_text(l["text"] if isinstance(l, dict) else l)
           if cl:
               cleaned_lines.append(cl)
 
