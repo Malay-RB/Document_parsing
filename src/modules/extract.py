@@ -12,7 +12,7 @@ import asyncio
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from loaders.model_loader import ModelLoader
-from loaders.pdf_loader import PDFLoader
+from factory.pdf_factory import PDFFactory
 from engine.layout_engine import LayoutEngine
 from engine.ocr_engine import OCREngine
 from processing.pipeline_utils import extract_page_block
@@ -25,6 +25,7 @@ from processing.logger import logger, setup_logger
 from config import LABEL_MAP, ProjectConfig 
 from processing.pipeline_utils import extract_block_surya, extract_page_manual_concurrency
 
+from factory.pdf_factory import PDFFactory
 from engine.pipeline_factory import PipelineFactory
 from engine.layout_engine import LayoutEngine
 from engine.ocr_engine import OCREngine
@@ -87,7 +88,7 @@ def get_toc_metadata(current_page, h_data):
 
 @track_performance
 def run_single_page(
-    image, page_no, models, layout_engine, ocr_engine, classifier,
+    image, page_no, layout_engine, ocr_engine, classifier,
     pg_no_strategy, hierarchy_data, context_tracker,
     visuals_dir=None
 ):
@@ -145,23 +146,23 @@ def run_single_page(
     # ---  OCR EXTRACTION STRATEGY ---
     USE_ASYNC = ProjectConfig.STRATEGY
 
-    if USE_ASYNC == "ASYNC_SURYA":
-        # Batch extract all blocks at once using Surya's GPU/Thread batching
-        extracted_texts = asyncio.run(extract_block_surya(image, boxes, safe_coords, models, ocr_engine))
+    # if USE_ASYNC == "ASYNC_SURYA":
+    #     # Batch extract all blocks at once using Surya's GPU/Thread batching
+    #     extracted_texts = asyncio.run(extract_block_surya(image, boxes, safe_coords, models, ocr_engine))
 
 
-    elif USE_ASYNC == "ASYNC_UNIVERSAL":
-        # 🚀 NEW: Manual Concurrency (Works for Surya, EasyOCR, and Recursive Tables)
-        extracted_texts = asyncio.run(extract_page_manual_concurrency(
-            image, boxes, safe_coords, models, ocr_engine, layout_engine, ocr_type
-        ))
+    # elif USE_ASYNC == "ASYNC_UNIVERSAL":
+    #     # 🚀 NEW: Manual Concurrency (Works for Surya, EasyOCR, and Recursive Tables)
+    #     extracted_texts = asyncio.run(extract_page_manual_concurrency(
+    #         image, boxes, safe_coords, models, ocr_engine, layout_engine, ocr_type
+    #     ))
 
-    elif USE_ASYNC == "SYNC":
+    if USE_ASYNC == "SYNC":
         extracted_texts = []
         sync_start = time.perf_counter()
         for i, (box, coord) in enumerate(zip(boxes, safe_coords)):
             # Sequential extraction
-            text = extract_page_block(image, box, coord, models, ocr_engine, ocr_type, layout_engine=layout_engine)
+            text = extract_page_block(image, box, coord, layout_engine ,ocr_engine, ocr_type)
             extracted_texts.append(text)
         
         sync_duration = time.perf_counter() - sync_start
@@ -349,13 +350,13 @@ def run_single_page(
     return page_blocks, debug_img
 
 @track_performance
-def run_deep_extraction(pdf_filename, input_path=None, output_path=None, start_page=1, pg_no_strategy=None, hierarchy=None, models=None, config=None, force_prod=False):
+def run_deep_extraction(pdf_filename, start_page=1, pg_no_strategy=None, hierarchy=None, layout_engine = None, ocr_engine = None, config=None, force_prod=False):
     
     cfg = config if config else ProjectConfig()
     
     # --- PATH SETUP ---
     auto_in, auto_out = cfg.get_active_paths(force_prod=force_prod)
-    final_in = input_path if input_path else auto_in
+    final_in = auto_in
     if isinstance(final_in, tuple): final_in = final_in[0]
 
     pdf_path = os.path.join(final_in, f"{pdf_filename}.pdf")
@@ -382,7 +383,11 @@ def run_deep_extraction(pdf_filename, input_path=None, output_path=None, start_p
     debug_coords_path = os.path.join(debug_coords_dir, f"{pdf_filename}_debug_coords.json")
 
     # 2. Initialize Objects
-    pdf_loader = PDFLoader(scale=cfg.PDF_SCALE)
+
+    pdf_factory = PDFFactory()
+    PDF_LOADER_MODEL = ProjectConfig.PDF_LOADER
+    pdf_loader = pdf_factory.create_loader(PDF_LOADER_MODEL, scale=3.0, dpi=150)
+
     pdf_loader.open(pdf_path)
     total_pages = pdf_loader.get_total_pages()
     master_pdf = pikepdf.Pdf.new()
@@ -400,13 +405,6 @@ def run_deep_extraction(pdf_filename, input_path=None, output_path=None, start_p
     #     easyocr_reader=models.easyocr_reader,
         
     # )
-
-    # Factory Initialization
-    global_factory = PipelineFactory()
-
-    layout_engine = LayoutEngine(global_factory)
-    ocr_engine = OCREngine(global_factory)
-    
     
     classifier = SemanticClassifier()
     context_tracker = ContextTracker()
@@ -425,7 +423,7 @@ def run_deep_extraction(pdf_filename, input_path=None, output_path=None, start_p
             image = pdf_loader.load_page(page_no)
             
             current_page_blocks, debug_img = run_single_page(
-                image, page_no, models, layout_engine, ocr_engine, 
+                image, page_no, layout_engine, ocr_engine, 
                 classifier, pg_no_strategy, hierarchy, context_tracker=context_tracker, visuals_dir = book_visuals_dir
             )
 

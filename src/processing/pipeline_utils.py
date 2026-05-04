@@ -20,7 +20,7 @@ def recursive_extract(image_crop, layout_engine, ocr_engine, ocr_type, depth=0, 
     inner_boxes = layout_engine.detect(image_crop, model_name = ProjectConfig.LAYOUT_MODEL)
 
     if not inner_boxes:
-        return ocr_engine.extract(crop=image_crop, model_name=ProjectConfig.TEXT_EXTRACTION_MODEL)
+        return ocr_engine.extract(crop=image_crop, model_name=ocr_type)
 
     texts = []
     for box in inner_boxes:
@@ -59,7 +59,7 @@ def check_Toc_percentage(images, toc):
     probe_results, debug_frames, selected_pages,droped_value = toc.toc_run_module(
         images,
         debug=True,
-        model="surya"
+        model=ProjectConfig.TOC_EXTRACTION_MODEL
     )
 
     if selected_pages:
@@ -68,46 +68,46 @@ def check_Toc_percentage(images, toc):
 
     return False, [], [], [], False
 
-def run_sync_phase(image, boxes, ocr_engine, model, target_anchor, height, width):
-    """
-    Analyzes the current page's top 3 boxes.
-    Returns (best_score, best_text) found in a SectionHeader or Title.
-    """
-    target_anchor = target_anchor.lower().strip()
-    best_page_score = -1.0  # Default if no SectionHeader found
-    best_page_text = "N/A"
+# def run_sync_phase(image, boxes, ocr_engine, model, target_anchor, height, width):
+#     """
+#     Analyzes the current page's top 3 boxes.
+#     Returns (best_score, best_text) found in a SectionHeader or Title.
+#     """
+#     target_anchor = target_anchor.lower().strip()
+#     best_page_score = -1.0  # Default if no SectionHeader found
+#     best_page_text = "N/A"
 
-    # Analyze only the top 3 boxes as requested
-    for i, box in enumerate(boxes[:3]):
-        label = box.label
-        x1, y1, x2, y2 = map(int, box.bbox)
+#     # Analyze only the top 3 boxes as requested
+#     for i, box in enumerate(boxes[:3]):
+#         label = box.label
+#         x1, y1, x2, y2 = map(int, box.bbox)
         
-        # Crop with safety padding
-        crop = image.crop((max(0, x1-5), max(0, y1-20), min(width, x2+5), min(height, y2+20)))
+#         # Crop with safety padding
+#         crop = image.crop((max(0, x1-5), max(0, y1-20), min(width, x2+5), min(height, y2+20)))
         
-        raw_ocr = ocr_engine.extract(crop, model)
+#         raw_ocr = ocr_engine.extract(crop, model)
         
-        if isinstance(raw_ocr, list) and len(raw_ocr) > 0:
-            # Extract text from every detected snippet in the crop and join
-            detected_text = " ".join([str(res[1]) for res in raw_ocr]).lower().strip()
-        else:
-            # Fallback if the OCR returns a single string or unexpected format
-            detected_text = str(raw_ocr).lower().strip()
+#         if isinstance(raw_ocr, list) and len(raw_ocr) > 0:
+#             # Extract text from every detected snippet in the crop and join
+#             detected_text = " ".join([str(res[1]) for res in raw_ocr]).lower().strip()
+#         else:
+#             # Fallback if the OCR returns a single string or unexpected format
+#             detected_text = str(raw_ocr).lower().strip()
         
-        # Log Box Details for terminal visibility
-        logger.info(f"📄 Box {i+1} | Label: {label: <15} | Text Snippet: {detected_text[:50]}")
+#         # Log Box Details for terminal visibility
+#         logger.info(f"📄 Box {i+1} | Label: {label: <15} | Text Snippet: {detected_text[:50]}")
 
-        # Sync matching logic: Only trust structural headers
-        if label in ["SectionHeader", "Title", "Heading"]:
-            similarity = difflib.SequenceMatcher(None, target_anchor, detected_text).ratio()
+#         # Sync matching logic: Only trust structural headers
+#         if label in ["SectionHeader", "Title", "Heading"]:
+#             similarity = difflib.SequenceMatcher(None, target_anchor, detected_text).ratio()
             
-            if similarity > best_page_score:
-                best_page_score = similarity
-                best_page_text = detected_text
+#             if similarity > best_page_score:
+#                 best_page_score = similarity
+#                 best_page_text = detected_text
 
-    return best_page_score, best_page_text
+#     return best_page_score, best_page_text
 
-def extract_page_block(image, box, safe_coord, models, ocr_engine, ocr_type, layout_engine = None):
+def extract_page_block(image, box, safe_coord, layout_engine, ocr_engine, ocr_type):
     """Main router for individual blocks with Defensive Cropping and Visual Linking."""
     # 1. Coordinate Validation & Clipping
     img_w, img_h = image.size

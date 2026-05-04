@@ -25,6 +25,10 @@ class ProjectConfig:
     # Points to: src/tests/test_output
     TEST_OUTPUT = os.path.join(BASE_STR, "tests", "test_output")
 
+    # --- PDF LOADER MODEL ---
+
+    PDF_LOADER = "ironpdf"
+
     # --- AI & EXTRACTION SETTINGS ---
     
     LAYOUT_MODEL = "surya_layout"

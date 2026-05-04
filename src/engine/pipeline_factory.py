@@ -5,6 +5,14 @@ from abc import ABC, abstractmethod
 from processing.logger import logger
 
 
+# Helper class
+class OCRElement:
+    """Standardized object to hold raw bounding boxes and text."""
+    def __init__(self, bbox, text):
+        self.bbox = bbox
+        self.text = text
+
+
 # 1. BASE INTERFACE
 
 class BasePipelineModel(ABC):
@@ -22,6 +30,10 @@ class BasePipelineModel(ABC):
     def execute(self, *args, **kwargs):
         """Standardized execution method (used for layout, ocr, math, etc.)"""
         pass
+
+    def get_raw_elements(self, image, **kwargs):
+        """Optional method: Returns a list of OCRElement objects (bbox + text)."""
+        raise NotImplementedError(f"{self.__class__.__name__} does not support raw element extraction.")
 
 
 # 2. SHARED DEPENDENCIES
@@ -90,6 +102,16 @@ class SuryaOCRWrapper(BasePipelineModel):
         predictions = rec_model([pil_crop], det_predictor=det_model)
         return " ".join([line.text for line in predictions[0].text_lines]) if predictions else ""
     
+    def get_raw_elements(self, image, **kwargs):
+        rec_model, det_model = self.load()
+        pil_image = image.convert("RGB") if hasattr(image, 'convert') else image
+        
+        line_predictions = rec_model([pil_image], det_predictor=det_model)[0]
+        
+        # Surya already returns objects with .bbox and .text, but we wrap them 
+        # in our standard OCRElement to ensure total consistency.
+        return [OCRElement(line.bbox, line.text) for line in line_predictions.text_lines]
+    
 # EASY OCR (TEXT)
 class EasyOCRWrapper(BasePipelineModel):
     def load(self):
@@ -105,6 +127,22 @@ class EasyOCRWrapper(BasePipelineModel):
         results = engine.readtext(np_crop, detail=0)
         text = " ".join(results) if results else ""
         return text.replace(" ", "") if re.match(r'^[\d\s]+$', text) else text
+    
+    def get_raw_elements(self, image, **kwargs):
+        engine = self.load()
+        import numpy as np
+        np_image = np.array(image) if not isinstance(image, np.ndarray) else image
+        
+        results = engine.readtext(np_image)
+        elements = []
+        for res in results:
+            coords, text = res[0], res[1]
+            xs = [p[0] for p in coords]
+            ys = [p[1] for p in coords]
+            bbox = [min(xs), min(ys), max(xs), max(ys)]
+            elements.append(OCRElement(bbox, text))
+            
+        return elements
 
 # RAPID OCR (Latex)
 class RapidLatexWrapper(BasePipelineModel):

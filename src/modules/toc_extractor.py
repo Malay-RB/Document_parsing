@@ -22,26 +22,18 @@ from processing.logger import logger, setup_logger
 # from processing.toc_patterns import patch_toc_processor
 from processing.toc_patterns import robust_transform_logic
 
+from factory.pdf_factory import PDFFactory
+from engine.pipeline_factory import PipelineFactory
+
 from config import ProjectConfig
 
 
 class TOCProcessor:
-    def __init__(self, ocr_engine=None, models = None):
-        # # Auto-detect hardware
-        # device = "cuda" if torch.cuda.is_available() else "cpu"
-        # os.environ["SURYA_DEVICE"] = device
-        # os.environ["TORCH_DEVICE"] = device
+    def __init__(self, ocr_engine):
+        
 
-        # print(f":hammer_and_wrench:  [TOC_INIT] Initializing Models on {device.upper()}...")
-
-        # models = ModelLoader().load()
-        # self.foundation = FoundationPredictor(checkpoint=settings.LAYOUT_MODEL_CHECKPOINT)
-        # self.layout_predictor = LayoutPredictor(self.foundation)
-        # self.detection_predictor = DetectionPredictor()
-        # self.recognition_predictor = RecognitionPredictor(self.foundation)
-        # self.easyocr_reader = models.easyocr_reader
-
-        # self.ocr_engine = ocr_engine
+        self.ocr_engine = ocr_engine
+        # self.factory = global_factory
 
         # OCR result cache: page_idx → {"lines": [...], "elements": [...]}
         self._ocr_cache: dict[int, dict] = {}
@@ -54,6 +46,7 @@ class TOCProcessor:
         self.min_line_length = 6
         self.max_chapter_jump = 5
         self.transform_logic = robust_transform_logic.__get__(self, TOCProcessor)
+
     def _spatial_grouping(self, raw_elements):
         """Groups raw OCR boxes into logical horizontal lines based on Y-coordinates."""
         if not raw_elements:
@@ -203,25 +196,11 @@ class TOCProcessor:
 
         elements = []
         try:
-            if model == "surya":
-                line_predictions = self.recognition_predictor(
-                    [image], det_predictor=self.detection_predictor
-                )[0]
-                elements = line_predictions.text_lines
-
-            elif model == "easy":
-                results = self.easyocr_reader.readtext(np.array(image))
-                for res in results:
-                    coords, text = res[0], res[1]
-                    xs = [p[0] for p in coords]
-                    ys = [p[1] for p in coords]
-
-                    class MockLine:
-                        pass
-                    m = MockLine()
-                    m.bbox = [min(xs), min(ys), max(xs), max(ys)]
-                    m.text = text
-                    elements.append(m)
+            # Safely map legacy 'surya' strings to the factory's expected key
+            target_key = model
+            
+            # 🚀 PURE FACTORY PATTERN: Get the model and blindly call get_raw_elements()
+            elements = self.ocr_engine.get_raw_elements(image, target_key)
 
         except Exception as e:
             print(f"❌ OCR failed on page {page_idx + 1}: {e}")
@@ -250,7 +229,7 @@ class TOCProcessor:
         print(f"\n📖 [TOC_PROCESS] Extracting structure using {model.upper()}...")
 
         DROP_THRESHOLD = 10
-        START_THRESHOLD = 80
+        START_THRESHOLD = 50
 
         selected_pages = []
         raw_output = []
@@ -316,86 +295,7 @@ class TOCProcessor:
             return [], [], selected_pages,droped_value
 
         return structured_results, [], selected_pages,droped_value
-
-
-    # def transform_logic(self, raw_pages):
-    #     print(f":brain: [TOC_TRANSFORM] Converting lines to structured JSON...")
-    #     structured_data = []
-    #     active_unit_id, active_unit_name = None, None
-    #     last_chapter_id = 0
-
-    #     for page in raw_pages:
-    #         merged_lines = []
-    #         lines = page.get("lines", [])
-
-    #         # Step 1: Logic to merge page numbers that broke into new lines
-    #         for line in lines:
-    #             stripped = line.strip()
-    #             is_num = re.fullmatch(r'\d{1,4}(\s*(?:-|–|—|to)\s*\d{1,4})?', stripped, re.IGNORECASE)
-
-    #             if is_num and merged_lines:
-    #                 if re.match(r'^\d+\.?\s+', merged_lines[-1].strip()):
-    #                     merged_lines[-1] = merged_lines[-1].strip() + " " + stripped
-    #                     print(f"      :link: Merged floating page number: {stripped}")
-    #                 else: merged_lines.append(line)
-    #             else: merged_lines.append(line)
-
-    #         # Step 2: Extraction logic
-    #         for line in merged_lines:
-    #             if self.is_header_or_footer(line): continue
-    #             cleaned = self.clean_text(line)
-
-    #             if not cleaned or len(cleaned) < self.min_line_length or self.float_check.match(cleaned):
-    #                 continue
-
-    #             id_match = self.chapter_id_pattern.match(cleaned)
-    #             if not id_match: continue
-
-    #             chapter_id_candidate = int(id_match.group(1))
-
-    #             # Check for unrealistic ID jumps (e.g., Ch 2 to Ch 50)
-    #             if chapter_id_candidate < last_chapter_id or chapter_id_candidate > last_chapter_id + self.max_chapter_jump:
-    #                 continue
-
-    #             page_match = self.page_pattern.search(cleaned)
-    #             start_p, end_p = None, None
-    #             if page_match:
-    #                 start_p = int(page_match.group(1))
-    #                 if page_match.group(2): end_p = int(page_match.group(2))
-    #                 raw_name = cleaned[id_match.end():page_match.start()].strip()
-    #             else:
-    #                 raw_name = cleaned[id_match.end():].strip()
-
-    #             chapter_name = self.sanitize_title(raw_name.strip(" .-_"))
-    #             if not chapter_name: continue
-
-    #             # Logic for Unit Headers (e.g., "Unit 1 Introduction to Bio")
-    #             unit_check = re.search(r"^([A-Za-z\s]+?)\s+(\d+)\.?\s+(.+)", chapter_name)
-    #             if unit_check:
-    #                 active_unit_id, active_unit_name = chapter_id_candidate, self.sanitize_title(unit_check.group(1).strip())
-    #                 chapter_id, final_name = int(unit_check.group(2)), self.sanitize_title(unit_check.group(3).strip())
-    #             else:
-    #                 chapter_id, final_name = chapter_id_candidate, chapter_name
-
-    #             print(f"      :star: Identified: Ch {chapter_id} - {final_name} [Starts Page: {start_p}]")
-
-    #             structured_data.append({
-    #                 "unit_id": active_unit_id,
-    #                 "unit_name": active_unit_name,
-    #                 "chapter_id": chapter_id,
-    #                 "chapter_name": final_name,
-    #                 "start_page": start_p,
-    #                 "end_page": end_p
-    #             })
-    #             last_chapter_id = chapter_id
-
-    #     # Step 3: Fill end pages based on next chapter start
-    #     for i in range(len(structured_data) - 1):
-    #         if structured_data[i]["end_page"] is None:
-    #             next_start = structured_data[i + 1]["start_page"]
-    #             if next_start: structured_data[i]["end_page"] = next_start - 1
-
-    #     return structured_data
+    
 
 # ==========================================
 # STANDALONE RUNNER

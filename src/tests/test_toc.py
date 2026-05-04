@@ -39,7 +39,7 @@ def test_toc_extraction_isolated_file(shared_models):
     api = TOCProcessorAPI(models=shared_models)
     
     # Run extraction. Corrected logic now subtracts 50px padding from debug boxes.
-    results, debug_frames = api.run_api(toc_imgs, debug=True, model=cfg.EXTRACTION_MODEL)
+    results, debug_frames = api.run_api(toc_imgs, debug=True, model=cfg.TEXT_EXTRACTION_MODEL)
     
     loader.close()
 

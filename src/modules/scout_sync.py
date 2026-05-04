@@ -9,12 +9,9 @@ from ironpdf import PdfDocument
 # Ensure project root is in path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from loaders.model_loader import ModelLoader
-from loaders.pdf_loader import PDFLoader
-from engine.layout_engine import LayoutEngine
-from engine.ocr_engine import OCREngine
+
 from modules.toc_extractor import TOCProcessor
-from processing.pipeline_utils import run_sync_phase,check_Toc_percentage
+from processing.pipeline_utils import check_Toc_percentage
 from processing.optimize_layout import filter_overlapping_boxes, get_unified_sorting
 from exporters.exporter import PDFDebugExporter
 from processing.logger import logger
@@ -23,10 +20,12 @@ from config import ProjectConfig
 from processing.logger import setup_logger
 from processing.optimize_layout import draw_layout
 from processing.toc_patterns import patch_toc_processor
+from factory.pdf_factory import PDFFactory
 
 @track_performance
-def run_scout_sync(pdf_name, input_path=None, output_path=None, models=None, config=None, force_prod=False):
+def run_scout_sync(pdf_name, layout_engine = None, ocr_engine = None, config=None, force_prod=False):
 
+    logger.info(f"🛰️  SCOUT & SYNC STARTING: [{pdf_name}]")
     debug_mode = ProjectConfig.DEBUG_MODE
 
     # 1. CONFIGURATION RESOLUTION
@@ -36,12 +35,12 @@ def run_scout_sync(pdf_name, input_path=None, output_path=None, models=None, con
     auto_in, auto_out = cfg.get_active_paths(force_prod=force_prod)
     
     # Use provided paths if any, otherwise use auto-detected ones
-    final_in = input_path if input_path else auto_in
-    final_out = output_path if output_path else auto_out
+    final_in =  auto_in
+    final_out =  auto_out
 
     pdf_path = os.path.join(final_in, f"{pdf_name}.pdf")
     scout_limit = cfg.SCOUT_LIMIT
-    extraction_model = cfg.EXTRACTION_MODEL 
+    extraction_model = cfg.TEXT_EXTRACTION_MODEL 
     
     # Define sub-directory for artifacts
     report_dir = os.path.join(final_out, "sync_reports")
@@ -52,29 +51,26 @@ def run_scout_sync(pdf_name, input_path=None, output_path=None, models=None, con
         logger.error(f"❌ Error: {pdf_path} not found.")
         return None
 
-    logger.info(f"🛰️  SCOUT & SYNC START: {pdf_name}")
 
     # 2. INITIALIZATION
-    pdf_loader = PDFLoader(scale=cfg.PDF_SCALE)
-    pdf_loader.open(pdf_path)
-    total_pages = pdf_loader.get_total_pages()
 
-    # Reuse models if passed (Injection), else load new ones (Singleton handled in loader)
-    if models is None:
-        logger.info("⚙️  Loading Scout Models...")
-        models = ModelLoader().load()
+    try:
+        pdf_factory = PDFFactory()
+
+        PDF_LOADER_MODEL = ProjectConfig.PDF_LOADER
+
+        pdf_loader = pdf_factory.create_loader(PDF_LOADER_MODEL, scale=3.0, dpi=150)
+        logger.info(f"📂 [FILE I/O] Requesting lock on PDF: {pdf_name}.pdf")
+        pdf_loader.open(pdf_path)
+        total_pages = pdf_loader.get_total_pages()
+        logger.info(f"✅ [FILE I/O] PDF locked successfully. Total Pages: {total_pages}")
+    except Exception as e:
+        logger.error(f"❌ [BLOCKER] PDFFactory failed to load document: {e}")
+        return None
     
-    layout_engine = LayoutEngine(models.layout_predictor)
-    ocr_engine = OCREngine(
-        recognition_predictor=models.recognition_predictor,
-        detection_predictor=models.detection_predictor,
-        rapid_text_engine=models.rapid_text_engine,
-        rapid_latex_engine=models.rapid_latex_engine,
-        easyocr_reader=models.easyocr_reader
-    )
     
     # Pass both engines and injected models
-    toc = TOCProcessor(ocr_engine=ocr_engine, models=models)
+    toc = TOCProcessor(ocr_engine=ocr_engine)
     patch_toc_processor(toc)
 
     state = {
@@ -87,55 +83,6 @@ def run_scout_sync(pdf_name, input_path=None, output_path=None, models=None, con
         "debug_images": []       
     }
     content_start = None
-    pdf_readed = PdfDocument.FromFile(pdf_path)
-
-    def pdf_page_to_rgb_clean(pdf_path, page_no,pdf_readed):
-        dpi=150
-        fresh_pdf = pdf_readed
-        print("pageno pass in the pdf_page_to_rgb_clean funtion",page_no)
-        
-        # try:
-        single_page_pdf = fresh_pdf.CopyPage(page_no)
-        bmp_array = single_page_pdf.ToBitmap(0, DPI=dpi)
-        bmp = bmp_array[0]  # always index 0 since it's a single-page doc
-
-        img = Image.frombytes(
-            "RGBA",
-            (bmp.Width, bmp.Height),
-            bytes(bmp.GetBytes()),
-            "raw",
-            "BGRA"
-        )
-
-        img = img.transpose(Image.FLIP_TOP_BOTTOM)
-        img = img.convert("RGB")
-
-        # bmp.Dispose()
-        # del bmp
-        # del bmp_array
-
-        # finally:
-        #     fresh_pdf.Dispose()
-        #     del fresh_pdf
-        #     gc.collect()
-
-        # ✅ Image enhancement
-        img = ImageEnhance.Contrast(img).enhance(1.4)
-        img = ImageEnhance.Brightness(img).enhance(1.05)
-        img = img.filter(ImageFilter.UnsharpMask(radius=1.5, percent=180, threshold=3))
-
-        # ✅ SAVE IMAGE
-        # if save:
-        #     folder = "image_testing_1"
-        #     os.makedirs(folder, exist_ok=True)  # create if not exists
-
-        #     filename = f"page_{page_no + 1}.jpg"  # human-readable page number
-        #     save_path = os.path.join(folder, filename)
-
-        #     img.save(save_path, "JPEG", quality=95)
-        #     print(f"✅ Saved: {save_path}")
-
-        return img
 
     try:
         # Loop with scout_limit safety
@@ -151,9 +98,9 @@ def run_scout_sync(pdf_name, input_path=None, output_path=None, models=None, con
 
 
             # ✅ Correct indexing
-            image = pdf_page_to_rgb_clean(pdf_path, page_no - 1,pdf_readed)
-            # image = pdf_loader.load_page(page_no)
-            width, height = image.size
+            # image = pdf_page_to_rgb_clean(pdf_path, page_no - 1,pdf_readed)
+            image = pdf_loader.load_page(page_no)
+            # width, height = image.size
 
             
 
@@ -235,3 +182,72 @@ if __name__ == "__main__":
     setup_logger(debug_mode=True)
     # Standalone mode: cfg will automatically pick Prod Input and Module Output
     run_scout_sync("ncert10M_8p")
+
+
+
+
+
+
+# def pdf_page_to_rgb_clean(pdf_path, page_no,pdf_readed):
+    #     dpi=150
+    #     fresh_pdf = pdf_readed
+    #     print("pageno pass in the pdf_page_to_rgb_clean funtion",page_no)
+        
+    #     # try:
+    #     single_page_pdf = fresh_pdf.CopyPage(page_no)
+    #     bmp_array = single_page_pdf.ToBitmap(0, DPI=dpi)
+    #     bmp = bmp_array[0]  # always index 0 since it's a single-page doc
+
+    #     img = Image.frombytes(
+    #         "RGBA",
+    #         (bmp.Width, bmp.Height),
+    #         bytes(bmp.GetBytes()),
+    #         "raw",
+    #         "BGRA"
+    #     )
+
+    #     img = img.transpose(Image.FLIP_TOP_BOTTOM)
+    #     img = img.convert("RGB")
+
+    #     # bmp.Dispose()
+    #     # del bmp
+    #     # del bmp_array
+
+    #     # finally:
+    #     #     fresh_pdf.Dispose()
+    #     #     del fresh_pdf
+    #     #     gc.collect()
+
+    #     # ✅ Image enhancement
+    #     img = ImageEnhance.Contrast(img).enhance(1.4)
+    #     img = ImageEnhance.Brightness(img).enhance(1.05)
+    #     img = img.filter(ImageFilter.UnsharpMask(radius=1.5, percent=180, threshold=3))
+
+    #     # ✅ SAVE IMAGE
+    #     # if save:
+    #     #     folder = "image_testing_1"
+    #     #     os.makedirs(folder, exist_ok=True)  # create if not exists
+
+    #     #     filename = f"page_{page_no + 1}.jpg"  # human-readable page number
+    #     #     save_path = os.path.join(folder, filename)
+
+    #     #     img.save(save_path, "JPEG", quality=95)
+    #     #     print(f"✅ Saved: {save_path}")
+
+    #     return img
+
+
+
+     # Reuse models if passed (Injection), else load new ones (Singleton handled in loader)
+    # if models is None:
+    #     logger.info("⚙️  Loading Scout Models...")
+    #     models = ModelLoader().load()
+    
+    # layout_engine = LayoutEngine(models.layout_predictor)
+    # ocr_engine = OCREngine(
+    #     recognition_predictor=models.recognition_predictor,
+    #     detection_predictor=models.detection_predictor,
+    #     rapid_text_engine=models.rapid_text_engine,
+    #     rapid_latex_engine=models.rapid_latex_engine,
+    #     easyocr_reader=models.easyocr_reader
+    # )

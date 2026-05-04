@@ -4,7 +4,6 @@ import os
 import json
 import gc
 from processing.logger import logger, setup_logger, perf_log
-from loaders.pdf_loader import PDFLoader
 from loaders.model_loader import ModelLoader
 
 from modules.scout_sync import run_scout_sync
@@ -17,6 +16,10 @@ from exporters.drive_upload import DriveModule
 from semantics.hierarchy import convert_to_hierarchy
 from semantics.asset_fit import NearbyContentLinker
 from semantics.final_id import process_json
+
+from engine.pipeline_factory import PipelineFactory
+from engine.layout_engine import LayoutEngine
+from engine.ocr_engine import OCREngine
 
 
 def format_runtime(seconds: float) -> str:
@@ -35,8 +38,10 @@ def run_pipeline(pdf_name, book_metadata, config: ProjectConfig):
     in_path, out_path = config.get_active_paths(force_prod=True)
     setup_logger(debug_mode=debug_mode) #logger Initialization
 
-    logger.info(":brain: Initializing Global AI Brain...")
-    shared_models = ModelLoader().load()
+    global_factory = PipelineFactory()
+
+    layout_engine  = LayoutEngine(global_factory)
+    ocr_engine = OCREngine(global_factory)
 
     # ── Output directories ──────────────────────────────────────────────
     json_dir = os.path.join(out_path, "json")
@@ -167,7 +172,7 @@ def run_pipeline(pdf_name, book_metadata, config: ProjectConfig):
     # ── Pipeline ────────────────────────────────────────────────────────
     try:
         # PHASE 1: Scout & Sync & TOC preperation
-        sync_results   = run_scout_sync(pdf_name=pdf_name, models=shared_models,
+        sync_results   = run_scout_sync(pdf_name=pdf_name, layout_engine = layout_engine, ocr_engine = ocr_engine,
                                         config=config, force_prod=True)
         hierarchy      = sync_results.get("hierarchy", []) if sync_results else []
         physical_start = sync_results.get("content_start_page") if sync_results else None
@@ -179,7 +184,8 @@ def run_pipeline(pdf_name, book_metadata, config: ProjectConfig):
             pdf_filename=pdf_name,
             start_page=physical_start,
             hierarchy=hierarchy,
-            models=shared_models,
+            layout_engine = layout_engine,
+            ocr_engine = ocr_engine,
             config=config,
             force_prod=True,
         )

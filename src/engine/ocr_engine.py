@@ -137,3 +137,7 @@ class OCREngine:
         except Exception as e:
             logger.error(f"OCR Extraction failed for {model_name}: {e}")
             return ""
+        
+    def get_raw_elements(self, image, model_name, **kwargs):
+        wrapper = self.factory.get_model(model_name)
+        return wrapper.get_raw_elements(image, **kwargs)
