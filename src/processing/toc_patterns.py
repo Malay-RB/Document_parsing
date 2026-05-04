@@ -332,7 +332,9 @@ def _has_chapter_after_unit(text: str) -> bool:
 
 # ── Line pre-processing ───────────────────────────────────────────────────────
 def _get_text(line) -> str:
-    return line["text"] if isinstance(line, dict) else line
+    if isinstance(line, dict):
+        return line.get("text", "")
+    return line if isinstance(line, str) else str(line)
 
 def _get_x(line):
     return line.get("x") if isinstance(line, dict) else None
@@ -430,7 +432,7 @@ def _merge_two_line_chapters(lines: list, config: TOCConfig = DEFAULT_CONFIG) ->
                 continue
 
         if merged and _is_continuation_line(current_clean, config):
-            prev_sp, prev_ep, _ = _extract_page_range(merged[-1], config)
+            prev_sp, prev_ep, _ = _extract_page_range(_get_text(merged[-1]), config)
             if prev_sp is None:
                 if isinstance(merged[-1], dict):
                     merged[-1]["text"] = merged[-1]["text"].strip() + " " + current_clean
