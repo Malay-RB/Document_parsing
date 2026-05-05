@@ -1,10 +1,6 @@
 import os
 import sys
-import gc
-import json
 
-from PIL import Image, ImageDraw, ImageEnhance, ImageFilter
-from ironpdf import PdfDocument
 
 # Ensure project root is in path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -19,7 +15,6 @@ from processing.performance_track import track_performance
 from config import ProjectConfig
 from processing.logger import setup_logger
 from processing.optimize_layout import draw_layout
-from processing.toc_patterns import patch_toc_processor
 from factory.pdf_factory import PDFFactory
 
 @track_performance
@@ -71,7 +66,6 @@ def run_scout_sync(pdf_name, layout_engine = None, ocr_engine = None, config=Non
     
     # Pass both engines and injected models
     toc = TOCProcessor(ocr_engine=ocr_engine)
-    patch_toc_processor(toc)
 
     state = {
         "hierarchy_data": [],

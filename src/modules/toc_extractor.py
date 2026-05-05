@@ -259,6 +259,7 @@ class TOCProcessor:
         raw_output = []
         start_found = False
         base_score = None
+        droped_value = False
 
 
         for idx, img in enumerate(toc_images):
