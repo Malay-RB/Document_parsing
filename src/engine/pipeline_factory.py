@@ -118,7 +118,7 @@ class EasyOCRWrapper(BasePipelineModel):
         if self._model is None:
             logger.info(f"📥 Lazy loading EasyOCR ({self.device.upper()})...")
             import easyocr
-            self._model = easyocr.Reader(['en', 'hi'], gpu=(self.device == "cuda"))
+            self._model = easyocr.Reader(['en',], gpu=(self.device == "cuda"))
         return self._model
 
     def execute(self, crop, **kwargs):
@@ -180,10 +180,10 @@ class Pix2TextMathWrapper(BasePipelineModel):
             self._model = Pix2Text.from_config(
                 total_configs={
                     'text_formula': {
-                        'languages': ('en', 'hi')
+                        'languages': ('en',)
                     }
                 },
-                device=self.device
+                device='cpu'
             )
         return self._model
 

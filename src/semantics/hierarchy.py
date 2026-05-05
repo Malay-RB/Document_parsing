@@ -122,10 +122,10 @@ def build_hierarchy(  # ← renamed from convert_to_hierarchy
     return output
 
 
-def convert_to_hierarchy(input_path: str, output_path: str = None):
-    board_name   = "Cbse"
-    subject_name = "Maths"
-    standard     = "10"
+def convert_to_hierarchy(input_path: str, output_path: str = None, book_metadata: Dict = None ):
+    board_name   = book_metadata.get("Board")
+    subject_name = book_metadata.get("Subject")
+    standard     = book_metadata.get("Class")
 
     with open(input_path, "r", encoding="utf-8") as f:
         data = json.load(f)

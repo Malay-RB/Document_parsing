@@ -253,7 +253,7 @@ class TOCProcessor:
         print(f"\n📖 [TOC_PROCESS] Extracting structure using {model.upper()}...")
 
         DROP_THRESHOLD = 10
-        START_THRESHOLD = 50
+        START_THRESHOLD = 80
 
         selected_pages = []
         raw_output = []

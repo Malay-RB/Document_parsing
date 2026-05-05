@@ -100,7 +100,7 @@ def run_pipeline(pdf_name, book_metadata, config: ProjectConfig):
             if os.path.exists(temp_jsonl_path):
                 os.remove(temp_jsonl_path)
 
-    def run_hierarchy_and_linking():
+    def run_hierarchy_and_linking(book_metadata):
         # ── Step 4: Hierarchy ──────────────────────────────────────────
         if not os.path.exists(final_output_path):
             logger.warning(":warning: Skipping hierarchy: final_structured.json not found.")
@@ -111,6 +111,7 @@ def run_pipeline(pdf_name, book_metadata, config: ProjectConfig):
             convert_to_hierarchy(
                 input_path=final_output_path,
                 output_path=hierarchy_path,
+                book_metadata = book_metadata
             )
             logger.info(":white_check_mark: Hierarchy saved.")
         except Exception as e:
@@ -227,7 +228,7 @@ def run_pipeline(pdf_name, book_metadata, config: ProjectConfig):
 
     except (Exception, KeyboardInterrupt) as e:
         save_data()
-        run_hierarchy_and_linking()
+        run_hierarchy_and_linking(book_metadata)
         sync_all_to_cloud()
         logger.error(f"💥 FATAL PIPELINE ERROR: {e}")
         logger.error("🛑 Pipeline terminated.")
