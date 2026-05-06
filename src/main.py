@@ -222,7 +222,7 @@ def run_pipeline(pdf_name, book_metadata, config: ProjectConfig):
         save_data()
 
         # ✅ PHASES 3: Hierarchy + Asset linking
-        run_hierarchy_and_linking()
+        run_hierarchy_and_linking(book_metadata)
 
         sync_all_to_cloud()
 
