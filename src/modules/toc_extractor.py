@@ -10,20 +10,12 @@ from PIL import ImageOps, ImageFilter, ImageDraw
 # Ensure project root is in path for imports
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from surya.settings import settings
-from surya.layout import LayoutPredictor
-from surya.detection import DetectionPredictor
-from surya.recognition import RecognitionPredictor
-from surya.foundation import FoundationPredictor
-
-from loaders.model_loader import ModelLoader
-from loaders.pdf_loader import PDFLoader
 from processing.logger import logger, setup_logger
-# from processing.toc_patterns import patch_toc_processor
 from processing.toc_patterns import robust_transform_logic
 
 from factory.pdf_factory import PDFFactory
 from engine.pipeline_factory import PipelineFactory
+from engine.ocr_engine import OCREngine
 
 from config import ProjectConfig
 
@@ -327,70 +319,236 @@ class TOCProcessor:
 # ==========================================
 def run_standalone_toc(pdf_filename, page_list=None):
     """
-    pdf_filename: Name of file in 'input/'
-    page_list: List of pages to process. If None, processes all pages (for cropped PDFs).
+    Standalone TOC extraction runner compatible with the
+    new OCR factory/pipeline architecture.
+
+    pdf_filename: Name of file in 'input/' without .pdf
+    page_list: Specific pages to process (1-indexed).
+               None = process full PDF.
     """
+    DOTNET_ROOT = r"C:\Users\malay\AppData\Local\Microsoft\dotnet"
+
+    os.environ["DOTNET_ROOT"] = DOTNET_ROOT
+
+    os.environ["PATH"] = (
+        DOTNET_ROOT + os.pathsep +
+        os.environ["PATH"]
+    )
+
+    from pythonnet import load
+
+    load("coreclr")
+
     setup_logger("INFO")
+
     pdf_path = f"input/{pdf_filename}.pdf"
     output_dir = "modules/output/toc"
+
     os.makedirs(output_dir, exist_ok=True)
+
     json_out = f"{output_dir}/{pdf_filename}_toc.json"
 
     if not os.path.exists(pdf_path):
-        print(f":x: Error: {pdf_path} not found.")
+        print(f"❌ Error: {pdf_path} not found.")
         return
 
-    loader = PDFLoader(ProjectConfig.PDF_SCALE)
-    loader.open(pdf_path)
+    # ==========================================
+    # INITIALIZE PDF LOADER USING FACTORY
+    # ==========================================
+    try:
+        pdf_factory = PDFFactory()
 
-    # Logic for page selection
+        PDF_LOADER_MODEL = ProjectConfig.PDF_LOADER
+
+        pdf_loader = pdf_factory.create_loader(
+            PDF_LOADER_MODEL,
+            scale=3.0,
+            dpi=150
+        )
+
+        logger.info(
+            f"📂 [FILE I/O] Requesting lock on PDF: "
+            f"{pdf_filename}.pdf"
+        )
+
+        pdf_loader.open(pdf_path)
+
+        total_pages = pdf_loader.get_total_pages()
+
+        logger.info(
+            f"✅ [FILE I/O] PDF locked successfully. "
+            f"Total Pages: {total_pages}"
+        )
+
+    except Exception as e:
+        logger.error(
+            f"❌ [BLOCKER] PDFFactory failed to load document: {e}"
+        )
+        return
+
+    # ==========================================
+    # PAGE SELECTION
+    # ==========================================
     if page_list is None:
-        total = loader.get_total_pages()
-        page_list = list(range(1, total + 1))
-        print(f":open_file_folder: Processing FULL file ({total} pages)...")
+        page_list = list(range(1, total_pages + 1))
+        print(f"📂 Processing FULL file ({total_pages} pages)...")
     else:
-        print(f":dart: Processing SPECIFIC pages: {page_list}")
+        print(f"🎯 Processing SPECIFIC pages: {page_list}")
 
-    # Load images
+    # ==========================================
+    # LOAD PAGE IMAGES
+    # ==========================================
     images = []
+
     for p in page_list:
-        images.append(loader.load_page(p))
+        try:
+            img = pdf_loader.load_page(p)
+            images.append(img)
 
-    # Run TOC processor
-    toc = TOCProcessor()
-    # patch_toc_processor(toc)
-    results , debug_images , selected_pages  = toc.toc_run_module(images, debug=ProjectConfig.DEBUG_MODE, model=ProjectConfig.TOC_EXTRACTION_MODEL)
+        except Exception as e:
+            print(f"❌ Failed loading page {p}: {e}")
 
-    # Final Export
-    with open(json_out, "w", encoding="utf-8") as f:
-        json.dump(results, f, indent=4, ensure_ascii=False)
+    if not images:
+        print("❌ No pages loaded.")
+        pdf_loader.close()
+        return
 
+    # ==========================================
+    # INITIALIZE OCR ENGINE
+    # ==========================================
+    try:
+        print("\n🚀 Initializing OCR pipeline...")
+
+        global_factory = PipelineFactory()
+
+        ocr_engine = OCREngine(global_factory)
+
+        print(
+            f"✅ OCR Engine Ready: "
+            f"{ProjectConfig.TOC_EXTRACTION_MODEL}"
+        )
+
+    except Exception as e:
+        print(f"❌ Failed initializing OCR engine: {e}")
+        pdf_loader.close()
+        return
+
+    # ==========================================
+    # RUN TOC EXTRACTION
+    # ==========================================
+    try:
+        toc = TOCProcessor(ocr_engine=ocr_engine)
+
+        results, debug_images, selected_pages, dropped_value = (
+            toc.toc_run_module(
+                images,
+                debug=ProjectConfig.DEBUG_MODE,
+                model=ProjectConfig.TOC_EXTRACTION_MODEL,
+                page_offset=(page_list[0] - 1) if page_list else 0
+            )
+        )
+
+    except Exception as e:
+        print(f"❌ TOC extraction failed: {e}")
+        pdf_loader.close()
+        return
+
+    # ==========================================
+    # SAVE JSON OUTPUT
+    # ==========================================
+    try:
+        with open(json_out, "w", encoding="utf-8") as f:
+            json.dump(
+                results,
+                f,
+                indent=4,
+                ensure_ascii=False
+            )
+
+        print(f"💾 TOC JSON saved to: {json_out}")
+
+    except Exception as e:
+        print(f"❌ Failed saving JSON: {e}")
+
+    # ==========================================
+    # SAVE DEBUG IMAGES
+    # ==========================================
     if debug_images:
-        debug_path = os.path.join(output_dir, "debug_plots")
-        os.makedirs(debug_path, exist_ok=True)
-        for idx, img in enumerate(debug_images):
-            img.save(f"{debug_path}/{pdf_filename}_page_{idx+1}.png")
-        print(f":frame_with_picture: Debug images saved to: {debug_path}")
-   
 
-    loader.close()
-  
-    chapters  = [e for e in results if not e.get("is_subtopic")]
-    subtopics = [e for e in results if e.get("is_subtopic")]
-    units     = list({e["unit_id"] for e in results if e.get("unit_id") is not None})
+        debug_path = os.path.join(
+            output_dir,
+            "debug_plots"
+        )
+
+        os.makedirs(debug_path, exist_ok=True)
+
+        for idx, img in enumerate(debug_images):
+
+            try:
+                img.save(
+                    f"{debug_path}/"
+                    f"{pdf_filename}_page_{idx+1}.png"
+                )
+
+            except Exception as e:
+                print(
+                    f"❌ Failed saving debug image "
+                    f"{idx+1}: {e}"
+                )
+
+        print(f"🖼️ Debug images saved to: {debug_path}")
+
+    # ==========================================
+    # CLEANUP
+    # ==========================================
+    pdf_loader.close()
+    toc.clear_cache()
+
+    # ==========================================
+    # SUMMARY
+    # ==========================================
+    chapters = [
+        e for e in results
+        if not e.get("is_subtopic")
+    ]
+
+    subtopics = [
+        e for e in results
+        if e.get("is_subtopic")
+    ]
+
+    units = list({
+        e["unit_id"]
+        for e in results
+        if e.get("unit_id") is not None
+    })
 
     parts = [f"{len(chapters)} Chapters"]
+
     if units:
         parts.insert(0, f"{len(units)} Units")
+
     if subtopics:
         parts.append(f"{len(subtopics)} Subtopics")
 
-    print(f"\n:white_check_mark: SUCCESS: {', '.join(parts)} extracted.")
-    print(f":floppy_disk: File saved to: {json_out}")
+    print(
+        f"\n✅ SUCCESS: "
+        f"{', '.join(parts)} extracted."
+    )
+
+    print(f"📄 Selected TOC Pages: {selected_pages}")
+
+    if dropped_value:
+        print(
+            "⚠️ TOC stopped because "
+            "score dropped significantly."
+        )
+
+    print(f"💾 Final JSON Output: {json_out}")
 
 if __name__ == "__main__":
     # SETTINGS:
-    FILENAME = "Class7-Maths-reduced_toc"       # The .pdf name in your input folder
+    FILENAME = "CG_C10_Math_TOC"       # The .pdf name in your input folder
     PAGES = None         # Set to None if your PDF is already cropped to TOC only
 
     run_standalone_toc(FILENAME, page_list=PAGES)
