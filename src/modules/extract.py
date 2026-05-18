@@ -26,9 +26,11 @@ from config import LABEL_MAP, ProjectConfig
 from processing.pipeline_utils import extract_block_surya, extract_page_manual_concurrency
 
 from factory.pdf_factory import PDFFactory
-from engine.pipeline_factory import PipelineFactory
+from factory.pipeline_factory import PipelineFactory
 from engine.layout_engine import LayoutEngine
 from engine.ocr_engine import OCREngine
+
+from difflib import SequenceMatcher
 
 # --- TOC HELPER ---
 def get_toc_metadata(current_page, h_data):
@@ -84,6 +86,20 @@ def get_toc_metadata(current_page, h_data):
                 }
 
         return {"chapter_id": None, "chapter_name": None}
+
+
+def fuzzy_match(s1, s2, threshold=0.85):
+    """Helper to check if two strings match closely."""
+    if not s1 or not s2:
+        return False
+    # Normalize strings (lowercase and strip whitespace)
+    s1_clean = str(s1).strip().lower()
+    s2_clean = str(s2).strip().lower()
+    
+    if s1_clean in s2_clean or s2_clean in s1_clean:
+        return True
+        
+    return SequenceMatcher(None, s1_clean, s2_clean).ratio() >= threshold
 
 
 @track_performance
@@ -392,19 +408,6 @@ def run_deep_extraction(pdf_filename, start_page=1, pg_no_strategy=None, hierarc
     total_pages = pdf_loader.get_total_pages()
     master_pdf = pikepdf.Pdf.new()
 
-    # if models is None:
-    #     logger.info("⚙️ Initializing engines...")
-    #     models = ModelLoader().load()
-    
-    # layout_engine = LayoutEngine(models.layout_predictor)
-    # ocr_engine = OCREngine(
-    #     recognition_predictor=models.recognition_predictor,
-    #     detection_predictor=models.detection_predictor,
-    #     rapid_text_engine=models.rapid_text_engine,
-    #     rapid_latex_engine=models.rapid_latex_engine,
-    #     easyocr_reader=models.easyocr_reader,
-        
-    # )
     
     classifier = SemanticClassifier()
     context_tracker = ContextTracker()
@@ -502,14 +505,70 @@ def run_deep_extraction(pdf_filename, start_page=1, pg_no_strategy=None, hierarc
             offset = tracker.finalize()
             logger.info(f"📊 Calculated page offset: {offset}")
 
+
+
             if offset is not None:
+                # ======================================================================
+                # STEP 1: APPLY PAGE CORRECTION & PERFORM TOC IMPUTATION (IF NEEDED)
+                # ======================================================================
+                needs_imputation = any(entry.get("start_page") is None for entry in hierarchy) if hierarchy else False
+                found_anchors = {}
+
                 for b in all_blocks_for_correction:
+                    # Calculate and assign corrected page numbers instantly
                     corrected = b["pdf_page"] + offset
                     b["printed_page"] = corrected
                     b["page_number"] = corrected
 
-                    # TOC Linking
-                    # ✅ NOW do TOC linking using the corrected page number
+                    # Dynamic Imputation Pass: Extract anchor pages if any TOC start_pages are missing
+                    if needs_imputation:
+                        block_text = b.get("text", "")
+                        content_label = b.get("content_label") or b.get("content_type")
+                        
+                        # Only look inside structural elements (skip standard paragraph blocks)
+                        if block_text and content_label in ["section", "chapter", "heading", "title", "unknown"]:
+                            for idx, entry in enumerate(hierarchy):
+                                if entry.get("start_page") is not None:
+                                    continue
+                                
+                                c_name = entry.get("chapter_name")
+                                u_name = entry.get("unit_name")
+                                anchor_key = f"{u_name}_{c_name}_{idx}"
+                                
+                                if anchor_key in found_anchors:
+                                    continue
+
+                                # Fuzzy match against Chapter Name or Unit Name
+                                match_chapter = c_name and fuzzy_match(c_name, block_text)
+                                match_unit = u_name and fuzzy_match(u_name, block_text)
+
+                                if match_chapter or match_unit:
+                                    found_anchors[anchor_key] = corrected
+                                    logger.info(f"🎯 Imputation Anchor Found! '{block_text}' matches TOC Entry: '{c_name}'. Assigning corrected page: {corrected}")
+
+                # Apply found anchors to the hierarchy metadata and fill in missing information
+                if needs_imputation and found_anchors:
+                    for idx, entry in enumerate(hierarchy):
+                        if entry.get("start_page") is None:
+                            anchor_key = f"{entry.get('unit_name')}_{entry.get('chapter_name')}_{idx}"
+                            if anchor_key in found_anchors:
+                                entry["start_page"] = found_anchors[anchor_key]
+                                logger.info(f"✅ Imputed start_page for '{entry.get('chapter_name')}' -> {entry['start_page']}")
+                    
+                    # Automatically forward fill missing 'end_page' references based on the next chapter's start
+                    for idx, entry in enumerate(hierarchy):
+                        if entry.get("end_page") is None and idx + 1 < len(hierarchy):
+                            next_start = hierarchy[idx + 1].get("start_page")
+                            if next_start is not None:
+                                entry["end_page"] = next_start - 1
+
+                # ======================================================================
+                # STEP 2: TOC LINKING & ID GENERATION (NOW WITH GUARANTEED TOC VALUES)
+                # ======================================================================
+                for b in all_blocks_for_correction:
+                    corrected = b["page_number"]
+
+                    # TOC Linking (using corrected page numbers against the repaired hierarchy)
                     toc = get_toc_metadata(corrected, hierarchy)
                     b["unit_id"]      = toc.get("unit_id")
                     b["unit_name"]    = toc.get("unit_name")
@@ -524,18 +583,7 @@ def run_deep_extraction(pdf_filename, start_page=1, pg_no_strategy=None, hierarc
                     bi = b.get("block_index")
                     b["id"] = f"u{u}_c{c}_p{p}_b{bi}"
 
-                logger.info(f"✅ Applied offset {offset} to all blocks + TOC linked")
-            else:
-                # ✅ No offset, but still link TOC using pdf_page as fallback
-                logger.warning("⚠️ No offset found — linking TOC using raw pdf_page")
-                for b in all_blocks_for_correction:
-                    toc = get_toc_metadata(b["pdf_page"], hierarchy)
-                    b["unit_id"]      = toc.get("unit_id")
-                    b["unit_name"]    = toc.get("unit_name")
-                    b["chapter_id"]   = toc.get("chapter_id")
-                    b["chapter_name"] = toc.get("chapter_name")
-                    b["subtopic_id"]  = toc.get("subtopic_id")
-                    b["subtopic_name"]= toc.get("subtopic_name")
+                logger.info(f"✅ Applied offset {offset} to all blocks + TOC linked successfully")
 
         # YIELD CORRECTED BLOCKS
         if all_blocks_for_correction:

@@ -14,7 +14,7 @@ from processing.logger import logger, setup_logger
 from processing.toc_patterns import robust_transform_logic
 
 from factory.pdf_factory import PDFFactory
-from engine.pipeline_factory import PipelineFactory
+from factory.pipeline_factory import PipelineFactory
 from engine.ocr_engine import OCREngine
 
 from config import ProjectConfig
@@ -198,6 +198,7 @@ class TOCProcessor:
         img,
         page_idx: int,
         model: str = ProjectConfig.TOC_EXTRACTION_MODEL,
+        debug: bool = False
     ) -> dict:
         """OCR a single page image. Returns cached result on repeat calls."""
         if page_idx in self._ocr_cache:
@@ -221,13 +222,31 @@ class TOCProcessor:
         except Exception as e:
             print(f"❌ OCR failed on page {page_idx + 1}: {e}")
 
+        # --- DEBUG VISUALIZATION LOGIC ---
+        debug_frame = None
+        if debug:
+            # Create a copy so we don't mess with the original image
+            debug_frame = image.copy()
+            draw = ImageDraw.Draw(debug_frame)
+            
+            for el in elements:
+                # el.bbox usually follows [x0, y0, x1, y1]
+                draw.rectangle(el.bbox, outline="red", width=2)
+                # Optional: draw text (might be messy if too many elements)
+                # draw.text((el.bbox[0], el.bbox[1] - 10), el.text[:10], fill="blue")
+        # ----------------------------------
+
         grouped = []
         try:
             grouped = self._spatial_grouping(elements)
         except Exception as e:
             print(f"❌ Grouping failed on page {page_idx + 1}: {e}")
 
-        result = {"lines": grouped, "elements": elements}
+        result = {
+            "lines": grouped, 
+            "elements": elements, 
+            "debug_frame": debug_frame  
+        }
         self._ocr_cache[page_idx] = result
         return result
 
@@ -235,97 +254,137 @@ class TOCProcessor:
         """Call between documents to free memory."""
         self._ocr_cache.clear()
 
+    # def toc_run_module(
+    #     self,
+    #     toc_images,
+    #     debug: bool = True,
+    #     model: str = ProjectConfig.TOC_EXTRACTION_MODEL,
+    #     page_offset: int = 0,          
+    # ):
+    #     print(f"\n📖 [TOC_PROCESS] Extracting structure using {model.upper()}...")
+
+    #     DROP_THRESHOLD = ProjectConfig.TOC_DROP_THRESHOLD
+    #     START_THRESHOLD = ProjectConfig.TOC_START_THRESHOLD
+
+    #     structured_results = []
+    #     debug_frames = []
+    #     selected_pages = []
+    #     raw_output = []
+
+    #     start_found = False
+    #     base_score = None
+    #     dropped_value = False
+
+
+    #     for idx, img in enumerate(toc_images):
+    #         real_idx = page_offset + idx          # ← absolute page index
+    #         page_number = real_idx + 1            # ← absolute page number
+    #         print(f"   📄 Processing page {page_number}/{page_offset + len(toc_images)}...")
+
+    #         page_data = self._ocr_page(img, real_idx, model)   # ← use real_idx for cache key
+    #         raw_output.append(page_data)
+
+    #         score = self._score_single_page(page_data["lines"])
+    #         print(f"📄 Page {page_number} → TOC Score: {score:.2f}%\n")
+
+    #         if not start_found:
+    #             if score >= START_THRESHOLD:
+    #                 start_found = True
+    #                 base_score = score
+    #                 selected_pages.append(page_number)
+    #                 print(f"✅ TOC START at page {page_number} → score: {score}%")
+    #             else:
+    #                 print(f"⏭️  Page {page_number} → score: {score}% (below {START_THRESHOLD}%, skipping)")
+    #         else:
+    #             drop = base_score - score
+    #             if drop > DROP_THRESHOLD:
+    #                 dropped_value= True
+    #                 print(
+    #                     f"🛑 DROP at page {page_number} → score: {score}% "
+    #                     f"(dropped {drop:.1f}pts from {base_score}%) — stopping"
+    #                 )
+    #                 break
+    #             selected_pages.append(page_number)
+    #             print(f"✅ Page {page_number} → score: {score}% (included)")
+
+    #     if not raw_output:
+    #         print("❌ No OCR output generated.")
+    #         return structured_results, debug_frames, selected_pages, dropped_value
+
+    #     if not selected_pages:
+    #         print("⚠️ No TOC pages passed the threshold.")
+    #         return structured_results, debug_frames, selected_pages, dropped_value
+
+    #     print(f"\n🔥 Selected TOC pages: {selected_pages}")
+
+    #     filtered = [raw_output[p - 1 - page_offset] for p in selected_pages if 0 <= p - 1 - page_offset < len(raw_output)]
+
+    #     if not filtered:
+    #         print("❌ No valid TOC pages after filtering.")
+    #         return structured_results, debug_frames, selected_pages, dropped_value
+
+    #     try:
+    #         structured_results = self.transform_logic(filtered)
+    #     except Exception as e:
+    #         print(f"❌ transform_logic failed: {e}")
+    #         return structured_results, debug_frames, selected_pages, dropped_value
+
+    #     if not structured_results:
+    #         print("⚠️ transform_logic returned empty result.")
+    #         return structured_results, debug_frames, selected_pages, dropped_value
+
+    #     return structured_results, debug_frames, selected_pages, dropped_value
+
     def toc_run_module(
         self,
         toc_images,
         debug: bool = True,
+        page_offset: int = 0,
         model: str = ProjectConfig.TOC_EXTRACTION_MODEL,
-        page_offset: int = 0,          # ← add this
     ):
-        print(f"\n📖 [TOC_PROCESS] Extracting structure using {model.upper()}...")
+        """Refactored: Purely extracts data from the provided images."""
+        # Initialize all potential return values
+        structured_results = []
+        debug_frames = []
+        # Calculate pages based on input images
+        selected_pages = [page_offset + i + 1 for i in range(len(toc_images))]
+        dropped_value = False
 
-        DROP_THRESHOLD = 10
-        START_THRESHOLD = 80
-
-        selected_pages = []
         raw_output = []
-        start_found = False
-        base_score = None
-        droped_value = False
 
-
+        # 1. OCR Processing Loop
         for idx, img in enumerate(toc_images):
-            real_idx = page_offset + idx          # ← absolute page index
-            page_number = real_idx + 1            # ← absolute page number
-            print(f"   📄 Processing page {page_number}/{page_offset + len(toc_images)}...")
-
-            page_data = self._ocr_page(img, real_idx, model)   # ← use real_idx for cache key
+            real_idx = page_offset + idx
+            
+            # Pass the debug flag to trigger bbox drawing in _ocr_page
+            page_data = self._ocr_page(img, real_idx, model, debug=debug)
             raw_output.append(page_data)
 
-            score = self._score_single_page(page_data["lines"])
-            print(f"📄 Page {page_number} → TOC Score: {score:.2f}%\n")
+            # Collect the debug frame (image with bboxes) if generated
+            if debug and page_data.get("debug_frame"):
+                debug_frames.append(page_data["debug_frame"])
 
-            if not start_found:
-                if score >= START_THRESHOLD:
-                    start_found = True
-                    base_score = score
-                    selected_pages.append(page_number)
-                    print(f"✅ TOC START at page {page_number} → score: {score}%")
-                else:
-                    print(f"⏭️  Page {page_number} → score: {score}% (below {START_THRESHOLD}%, skipping)")
-            else:
-                drop = base_score - score
-                if drop > DROP_THRESHOLD:
-                    droped_value= True
-                    print(
-                        f"🛑 DROP at page {page_number} → score: {score}% "
-                        f"(dropped {drop:.1f}pts from {base_score}%) — stopping"
-                    )
-                    break
-                selected_pages.append(page_number)
-                print(f"✅ Page {page_number} → score: {score}% (included)")
-
+        # 2. Guard: Ensure we have OCR data to process
         if not raw_output:
-            print("❌ No OCR output generated.")
-            return [], [], [],droped_value
+            logger.warning("❌ No OCR output generated during module run.")
+            return structured_results, debug_frames, selected_pages, dropped_value
 
-        if not selected_pages:
-            print("⚠️ No TOC pages passed the threshold.")
-            return [], [], [], droped_value
-
-        print(f"\n🔥 Selected TOC pages: {selected_pages}")
-
-        filtered = [raw_output[p - 1 - page_offset] for p in selected_pages if 0 <= p - 1 - page_offset < len(raw_output)]
-
-        if not filtered:
-            print("❌ No valid TOC pages after filtering.")
-            return [], [], selected_pages,droped_value
-
+        # 3. Transformation Logic
         try:
-            structured_results = self.transform_logic(filtered)
+            structured_results = self.transform_logic(raw_output)
         except Exception as e:
-            print(f"❌ transform_logic failed: {e}")
-            return [], [], selected_pages,droped_value
+            logger.error(f"❌ transform_logic failed: {e}")
+            # Returns the empty structured_results, but keeps debug_frames and pages
+            return structured_results, debug_frames, selected_pages, dropped_value
 
-        if not structured_results:
-            print("⚠️ transform_logic returned empty result.")
-            return [], [], selected_pages,droped_value
-
-        return structured_results, [], selected_pages,droped_value
+        return structured_results, debug_frames, selected_pages, dropped_value
     
 
 # ==========================================
 # STANDALONE RUNNER
 # ==========================================
 def run_standalone_toc(pdf_filename, page_list=None):
-    """
-    Standalone TOC extraction runner compatible with the
-    new OCR factory/pipeline architecture.
-
-    pdf_filename: Name of file in 'input/' without .pdf
-    page_list: Specific pages to process (1-indexed).
-               None = process full PDF.
-    """
+    
     DOTNET_ROOT = r"C:\Users\malay\AppData\Local\Microsoft\dotnet"
 
     os.environ["DOTNET_ROOT"] = DOTNET_ROOT

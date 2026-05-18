@@ -45,12 +45,17 @@ class ProjectConfig:
 
     STRATEGY = "SYNC"
 
+    # --- TOC config settings ---
+    
+    TOC_DROP_THRESHOLD = 10
+    TOC_START_THRESHOLD = 80
+
     # ------Drive Upload------
     ENABLE_DRIVE_SYNC = False
     DRIVE_AUTH_MODE = "service" # or "token"
     SERVICE_ACCOUNT_PATH = "credentials/gv4ex001-f1a212036ab2.json"
     TOKEN_PATH = "credentials/token.json"
-    DRIVE_FOLDER_ID = "1R9I70FrGxaERLsr-WJFtJ4nyCGwuriUv" 
+    DRIVE_FOLDER_ID = "1DEThVzwsNyW7Ar0kqf7vvDiBLER5q-dI" 
     # for failed_data = 1R9I70FrGxaERLsr-WJFtJ4nyCGwuriUv
     # for success_data = 1DEThVzwsNyW7Ar0kqf7vvDiBLER5q-dI
     DRIVE_STRUCTURE_MODE = "Flat" # "Flat" or "Nested"

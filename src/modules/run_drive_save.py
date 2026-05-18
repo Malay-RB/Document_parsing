@@ -10,16 +10,16 @@ drive = DriveModule(cfg)
 user_metadata = {
     "Medium": "English", #"English" or "Hindi"
     "Board": "CBSE",
-    "Class": "9",
-    "Subject": "Science"
+    "Class": "6",
+    "Subject": "Mathematics"
 }
 
-json_file_name = "sci_c9_cbse_en_final_id"
+json_file_name = "math_cbse_c6_en_final_id"
 json_path = f"input/drive_upload_files/{json_file_name}.json"
 
-pdf_path = "input/drive_upload_files/sci_c9_cbse_en.pdf"
+pdf_path = "input/drive_upload_files/Ncert_class_6.pdf"
 
-extracted_visuals = "input/drive_upload_files/extracted_visuals_sci_c9_cbse_en"
+extracted_visuals = "input/drive_upload_files/extracted_visuals_math_c6_cbse_en"
 
 files = [json_path, pdf_path, extracted_visuals]
 

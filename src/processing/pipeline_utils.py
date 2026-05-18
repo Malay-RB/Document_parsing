@@ -10,7 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 from config import ProjectConfig
 import difflib
 import re
-from engine.ocr_factory import OCRFactory
+
 
 def recursive_extract(image_crop, layout_engine, ocr_engine, ocr_type, depth=0, max_depth=3):
     if depth > max_depth:
@@ -54,19 +54,75 @@ def clean_asset_name(text):
     clean = re.sub(r'[^a-zA-Z0-9\s]', '', text)
     return "_".join(clean.replace("\n", " ").split()[:5]).lower()
 
-def check_Toc_percentage(images, toc):
+def check_Toc_percentage(images, toc, page_offset=0):
+    """
+    Refactored: Handles the 'Should we process this?' logic and detects the stop condition.
+    """
+    # 1. Initialize Return Variables (Explicitly named)
+    structured_results = []
+    debug_frames = []
+    selected_pages = []
+    has_dropped = False
+    
+    valid_images = []
+    
+    # 2. Get Thresholds from Config
+    START_THRESHOLD = ProjectConfig.TOC_START_THRESHOLD
+    DROP_THRESHOLD = ProjectConfig.TOC_DROP_THRESHOLD
 
-    probe_results, debug_frames, selected_pages,droped_value = toc.toc_run_module(
-        images,
-        debug=True,
-        model=ProjectConfig.TOC_EXTRACTION_MODEL
+    start_found = False
+    base_score = None
+
+    # 3. Decision Logic Loop
+    for idx, img in enumerate(images):
+        # Determine absolute page index for OCR cache and logging
+        abs_idx = page_offset + idx
+        current_page_num = abs_idx + 1
+        
+        # Perform lightweight OCR check (Cached internally in 'toc')
+        page_data = toc._ocr_page(img, abs_idx)
+        score = toc._score_single_page(page_data["lines"])
+
+        if not start_found:
+            # Look for the beginning of the TOC
+            if score >= START_THRESHOLD:
+                start_found = True
+                base_score = score
+                valid_images.append(img)
+                selected_pages.append(current_page_num)
+                logger.info(f"✅ TOC START detected at page {current_page_num} ({score}%)")
+            else:
+                logger.debug(f"⏭️ Skipping page {current_page_num} ({score}%)")
+        else:
+            # We are inside a TOC block; check if the score has dropped significantly
+            drop = base_score - score
+            if drop > DROP_THRESHOLD:
+                has_dropped = True
+                logger.info(f"🛑 TOC STOP detected at page {current_page_num} (Score: {score}%, -{drop:.1f} pts drop)")
+                break # Exit loop: we have identified the end of the TOC
+            
+            # If no drop, continue accumulating TOC pages
+            valid_images.append(img)
+            selected_pages.append(current_page_num)
+
+    # 4. Guard: If no valid TOC pages were found in the current history, exit early
+    if not valid_images:
+        return structured_results, debug_frames, selected_pages, has_dropped
+
+    # 5. Execute Heavy Extraction
+    # We only send the confirmed 'valid_images' to the processing module
+    # We calculate the correct start offset so the extraction labels match original page numbers
+    first_toc_page_idx = page_offset + images.index(valid_images[0])
+    
+    structured_results, debug_frames, _, _ = toc.toc_run_module(
+        valid_images, 
+        debug=ProjectConfig.DEBUG_MODE,
+        page_offset=first_toc_page_idx
     )
 
-    if selected_pages:
-        logger.info(f"🎯 TOC DETECTED on Pages: {selected_pages}")
-        return True, probe_results, debug_frames,selected_pages,droped_value
+    return structured_results, debug_frames, selected_pages, has_dropped
 
-    return False, [], [], [], False
+    
 
 # def run_sync_phase(image, boxes, ocr_engine, model, target_anchor, height, width):
 #     """

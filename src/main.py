@@ -17,7 +17,7 @@ from semantics.hierarchy import convert_to_hierarchy
 from semantics.asset_fit import NearbyContentLinker
 from semantics.final_id import process_json
 
-from engine.pipeline_factory import PipelineFactory
+from factory.pipeline_factory import PipelineFactory
 from engine.layout_engine import LayoutEngine
 from engine.ocr_engine import OCREngine
 
@@ -244,11 +244,11 @@ def main():
     cfg = ProjectConfig()
     book_metadata = {
         "Medium": "English",
-        "Board":   "TN",                                                            
-        "Class":     "8",
-        "Subject": "Mathematics",
+        "Board":   "CBSE",                                                            
+        "Class":     "9",
+        "Subject": "Science",
     }
-    run_pipeline(pdf_name="Class_8_Mathematics_TN_20p", book_metadata=book_metadata, config=cfg)
+    run_pipeline(pdf_name="sci_c9_cbse_en", book_metadata=book_metadata, config=cfg)
 
 
 if __name__ == "__main__":
