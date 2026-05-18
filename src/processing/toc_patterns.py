@@ -272,6 +272,16 @@ def _strip_html(text: str) -> str:
     """Remove HTML/XML tags like <b>, </b>, <i>, <math>…</math> etc."""
     return re.sub(r'<[^>]+>', '', text).strip()
 
+_BULLET_PREFIX_RE = re.compile(
+    r'^(?:[○◯•·\-\*]|[oO0](?=\s+[Cc]hapter))\s+',
+    re.UNICODE,
+)
+
+def _strip_bullet_prefix(text: str) -> str:
+    """Remove leading OCR-bullet characters that precede chapter keywords."""
+    return _BULLET_PREFIX_RE.sub('', text).strip()
+
+
 def _is_bare_token(text: str) -> bool:
     stripped = text.strip()
     if re.fullmatch(r'\d{1,3}\.', stripped):
@@ -348,7 +358,10 @@ def _merge_floating_page_numbers(lines: list, config: TOCConfig = DEFAULT_CONFIG
     pre = []
     i = 0
     while i < len(lines):
-        stripped      = _get_text(lines[i]).strip()
+        stripped = _strip_bullet_prefix(_get_text(lines[i]).strip())
+        if isinstance(lines[i], dict):
+            lines[i] = {**lines[i], "text": _strip_bullet_prefix(lines[i].get("text", ""))}
+        #stripped = _get_text(lines[i]).strip()    
         if re.fullmatch(r'\d{1,3}\.', stripped) and i + 1 < len(lines):
             next_stripped = _get_text(lines[i + 1]).strip()
             already_complete = bool(re.match(r'^\d+\.?\s', next_stripped))
@@ -773,14 +786,31 @@ def robust_transform_logic(
     print("🧠 [TOC_TRANSFORM] Converting lines to structured JSON (ROBUST MODE)…")
 
     # ── 1. Collect all lines across pages ────────────────────────────────────
+    # all_lines = []
+    # for page in raw_pages:
+    #     lines  = page.get("lines", [])
+    #     merged = _merge_floating_page_numbers(lines, config)
+    #     merged = _merge_two_line_chapters(merged, config)
+    #     # Preserve dict format — extract plain strings only when needed downstream
+    #     all_lines.extend(merged)
     all_lines = []
     for page in raw_pages:
-        lines  = page.get("lines", [])
+        lines = page.get("lines", [])
+
+        # ── 1a. Normalise: strip HTML tags and bullet prefixes first ─────────
+        for i, line in enumerate(lines):
+            if isinstance(line, dict):
+                clean = _strip_html(line.get("text", ""))
+                clean = _strip_bullet_prefix(clean)
+                lines[i] = {**line, "text": clean}
+            else:
+                clean = _strip_html(str(line))
+                lines[i] = _strip_bullet_prefix(clean)
+
         merged = _merge_floating_page_numbers(lines, config)
         merged = _merge_two_line_chapters(merged, config)
-        # Preserve dict format — extract plain strings only when needed downstream
         all_lines.extend(merged)
-
+        
     # ── CHANGE 3/4: coord level function ─────────────────────────────────────
     try:
         level_fn, num_levels = build_level_fn(all_lines)

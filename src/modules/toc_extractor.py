@@ -105,7 +105,37 @@ class TOCProcessor:
         text = re.sub(r'<[^>]*>', '', text)
         text = re.sub(r'\.{2,}', ' ', text)
         return text.strip()
+    # def clean_text(self, text):
+    # # 🔥 HANDLE DICT INPUT
+    #     if isinstance(text, dict):
+    #         text = text.get("text", "")
 
+    #     # 🔥 ENSURE STRING
+    #     if not isinstance(text, str):
+    #         text = str(text)
+
+    #     # ── Remove HTML tags ─────────────────────────────
+    #     text = re.sub(r'<[^>]*>', '', text)
+
+    #     # ── Normalize OCR bullets/symbols ───────────────
+    #     text = re.sub(r'^[\s○◉●•◦]+', '', text)
+
+    #     # ── OCR sometimes reads bullets as 0 / O ────────
+    #     text = re.sub(
+    #         r'^[\s0O]+\s+(?=Chapter\b)',
+    #         '',
+    #         text,
+    #         flags=re.IGNORECASE
+    #     )
+
+    #     # ── Remove dotted leaders ───────────────────────
+    #     text = re.sub(r'\.{2,}', ' ', text)
+
+    #     # ── Normalize spaces ────────────────────────────
+    #     text = re.sub(r'\s{2,}', ' ', text)
+
+    #     return text.strip()
+        
     def sanitize_title(self, text):
         text = re.sub(r'[\n\r\t]+', ' ', text)
         text = re.sub(r'\s{2,}', ' ', text)
@@ -245,7 +275,7 @@ class TOCProcessor:
         print(f"\n📖 [TOC_PROCESS] Extracting structure using {model.upper()}...")
 
         DROP_THRESHOLD = 10
-        START_THRESHOLD = 80
+        START_THRESHOLD = 60
 
         selected_pages = []
         raw_output = []
@@ -326,7 +356,7 @@ def run_standalone_toc(pdf_filename, page_list=None):
     page_list: Specific pages to process (1-indexed).
                None = process full PDF.
     """
-    DOTNET_ROOT = r"C:\Users\malay\AppData\Local\Microsoft\dotnet"
+    DOTNET_ROOT = r"C:\Users\rohan\AppData\Local\Microsoft\dotnet"
 
     os.environ["DOTNET_ROOT"] = DOTNET_ROOT
 
@@ -410,7 +440,7 @@ def run_standalone_toc(pdf_filename, page_list=None):
 
     if not images:
         print("❌ No pages loaded.")
-        pdf_loader.close()
+        pdf_loader.close()  
         return
 
     # ==========================================
@@ -548,7 +578,7 @@ def run_standalone_toc(pdf_filename, page_list=None):
 
 if __name__ == "__main__":
     # SETTINGS:
-    FILENAME = "CG_C10_Math_TOC"       # The .pdf name in your input folder
+    FILENAME = "toc_Science_7"       # The .pdf name in your input folder
     PAGES = None         # Set to None if your PDF is already cropped to TOC only
 
     run_standalone_toc(FILENAME, page_list=PAGES)

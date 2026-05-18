@@ -244,11 +244,11 @@ def main():
     cfg = ProjectConfig()
     book_metadata = {
         "Medium": "English",
-        "Board":   "TN",                                                            
+        "Board":   "CG",                                                            
         "Class":     "8",
         "Subject": "Mathematics",
     }
-    run_pipeline(pdf_name="Class_8_Mathematics_TN_20p", book_metadata=book_metadata, config=cfg)
+    run_pipeline(pdf_name="sst_9cg_20p", book_metadata=book_metadata, config=cfg)
 
 
 if __name__ == "__main__":
